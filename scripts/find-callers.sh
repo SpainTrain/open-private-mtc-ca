@@ -20,12 +20,8 @@ if [ -z "$symbol" ]; then
   exit 1
 fi
 
-# Locate rg (ripgrep) in common places.
-if command -v rg > /dev/null 2>&1; then
-  RG=rg
-elif [ -x /home/spain/.gemini/tmp/bin/rg ]; then
-  RG=/home/spain/.gemini/tmp/bin/rg
-else
+# Locate rg (ripgrep).
+if ! command -v rg > /dev/null 2>&1; then
   echo "error: ripgrep (rg) not found; install with: cargo install ripgrep" >&2
   exit 1
 fi
@@ -34,5 +30,5 @@ fi
 escaped_symbol=$(printf '%s\n' "$symbol" | sed 's/[[\.*^$/]/\\&/g')
 
 # Search for function/method calls: symbol(...) or symbol::method()
-# Also catch method calls on the result.
-$RG -n "$escaped_symbol\s*\(" crates/ || true
+# Also catch method calls on the result. Use -H to ensure file:line prefix.
+rg -H -n "$escaped_symbol\s*\(" crates/ || true

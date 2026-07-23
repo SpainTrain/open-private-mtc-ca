@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# find-tests.sh — find test files/functions relevant to a path (spec §23.6).
+# find-tests.sh — find test files/functions relevant to a path (spec 23.6).
 #
 # Usage: scripts/find-tests.sh (via `make find-tests path=X`)
 #
@@ -20,23 +20,19 @@ if [ -z "$path" ]; then
   exit 1
 fi
 
-# Locate rg (ripgrep) in common places.
-if command -v rg > /dev/null 2>&1; then
-  RG=rg
-elif [ -x /home/spain/.gemini/tmp/bin/rg ]; then
-  RG=/home/spain/.gemini/tmp/bin/rg
-else
+# Locate rg (ripgrep).
+if ! command -v rg > /dev/null 2>&1; then
   echo "error: ripgrep (rg) not found; install with: cargo install ripgrep" >&2
   exit 1
 fi
 
 # If path matches a file, search in that file; otherwise treat as a module/crate name.
 if [ -f "$path" ]; then
-  # Emit all test functions in the file
-  $RG -n '^\s*#\[(tokio::)?test\]' "$path"
+  # Emit all test functions in the file with filename prefix
+  rg -H -n '^\s*#\[(tokio::)?test\]' "$path" || true
 else
   # Search for test files that match the module name
-  $RG -l '#\[(tokio::)?test\]' crates/ | $RG "$path"
+  rg -l '#\[(tokio::)?test\]' crates/ | rg "$path" || true
   # Also search for test functions that mention the path
-  $RG -n '#\[(tokio::)?test\]' crates/ | $RG "$path"
+  rg -H -n '#\[(tokio::)?test\]' crates/ | rg "$path" || true
 fi

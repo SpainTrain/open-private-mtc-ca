@@ -5,7 +5,7 @@
 # output agents can consume directly. Implemented by the agent-search-affordances
 # ticket.
 
-.PHONY: find-tests find-callers find-impl find-todo
+.PHONY: find-tests find-callers find-impl find-todo search-test
 
 find-tests: ## Find tests related to a path (usage: make find-tests path=X)
 	@scripts/find-tests.sh
@@ -18,3 +18,6 @@ find-impl: ## Find implementations of a trait (usage: make find-impl iface=Z)
 
 find-todo: ## Find all TODO/FIXME comments with file:line
 	@scripts/find-todo.sh
+
+search-test: ## Smoke-test search affordances (empty results, file:line prefix, missing args)
+	@scripts/search-test.sh

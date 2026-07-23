@@ -20,12 +20,8 @@ if [ -z "$iface" ]; then
   exit 1
 fi
 
-# Locate rg (ripgrep) in common places.
-if command -v rg > /dev/null 2>&1; then
-  RG=rg
-elif [ -x /home/spain/.gemini/tmp/bin/rg ]; then
-  RG=/home/spain/.gemini/tmp/bin/rg
-else
+# Locate rg (ripgrep).
+if ! command -v rg > /dev/null 2>&1; then
   echo "error: ripgrep (rg) not found; install with: cargo install ripgrep" >&2
   exit 1
 fi
@@ -34,4 +30,5 @@ fi
 escaped_iface=$(printf '%s\n' "$iface" | sed 's/[[\.*^$/]/\\&/g')
 
 # Search for impl blocks: impl Trait or impl<T> Trait or impl Trait for Type
-$RG -n "impl\s+[^{]*$escaped_iface" crates/ || true
+# Use -H to ensure file:line prefix.
+rg -H -n "impl\s+[^{]*$escaped_iface" crates/ || true
