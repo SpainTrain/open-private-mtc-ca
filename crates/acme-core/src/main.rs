@@ -13,7 +13,8 @@
 
 use std::sync::Arc;
 
-use acme_core::{router, AcmeState, BaseUrl, MonotonicClock};
+use acme_core::{router, AcmeState, BaseUrl};
+use clock::SystemClock;
 use eyre::WrapErr;
 
 const DEFAULT_PORT: u16 = 4402;
@@ -36,7 +37,7 @@ async fn main() -> eyre::Result<()> {
 
     let state = AcmeState::new(
         BaseUrl::new(format!("http://{addr}")),
-        Arc::new(MonotonicClock::new()),
+        Arc::new(SystemClock),
     );
 
     println!("ACME directory: http://{addr}/acme/directory");

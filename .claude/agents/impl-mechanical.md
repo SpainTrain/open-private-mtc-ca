@@ -24,7 +24,7 @@ You take beads tickets that are **unambiguous and mechanical**: documentation fr
 - Ticket contract: `docs/planning/epics/<epic>.json`, find your slug; the description's Goal / Acceptance Criteria / Out of Scope / Testing / Demo is binding. Spec: `docs/mtc-architecture-spec.md` (Read with offset/limit; cite sections).
 - Obey `.claude/rules/` (16 rules). Run `make agent-precheck` first, `make verify-task` before committing.
 - Make targets live in `mk/<name>.mk` fragments with `## help` comments — NEVER create or edit the root Makefile.
-- `git add` only files you created/modified; never `git add -A`; never commit `Cargo.lock`; never touch `docs/planning/` or the spec.
+- `git add` only files you created/modified; never `git add -A`; do not stage/commit `Cargo.lock` (the orchestrator regenerates it at merge); never touch `docs/planning/` or the spec.
 - Commit message: `<slug>: <summary>`, ending with the trailer lines given in your dispatch prompt.
 
 ## Escalation (BLOCKED protocol)

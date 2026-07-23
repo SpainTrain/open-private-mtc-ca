@@ -8,6 +8,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "base64ct",
+ "clock",
  "color-eyre",
  "eyre",
  "getrandom 0.3.4",
@@ -1619,6 +1620,8 @@ dependencies = [
 name = "mtc"
 version = "0.1.0"
 dependencies = [
+ "proptest",
+ "sha2",
  "thiserror",
  "trybuild",
 ]

@@ -18,6 +18,12 @@ publish = false
 
 [dependencies]
 thiserror = { workspace = true }
+# Non-workspace dependency, pinned in-crate (ticket tree-primitives): the
+# RustCrypto SHA-256 used by `Sha256Hasher` for the Merkle tree hash (spec §28
+# "RustCrypto crates"; §22.7 tree-updater hash function). `default-features =
+# false` keeps it `no_std`-friendly and drops the asm feature; we only need the
+# pure-Rust `Digest` API. Listed in the ticket report for the merge reconcile.
+sha2 = { version = "0.10", default-features = false }
 # Crypto deps for the signature-scheme abstraction (ticket mtclib-signing).
 # Not in [workspace.dependencies]: crypto is scoped to this crate for now and
 # pinned here per the "extra deps pinned in-crate" convention. RustCrypto is the
@@ -32,6 +38,9 @@ rand_core = { version = "0.6", features = ["getrandom"] } # OsRng for key genera
 # Not in [workspace.dependencies]; pinned here for the compile-fail test
 # harness only (spec §22.1 guarantee is proven by tests/compile_fail/).
 trybuild = "1.0"
+# Property-based Merkle-tree invariants (spec §19.2): determinism, append
+# stability, and subtree-decomposition coverage/bound.
+proptest = { workspace = true }
 
 [lints]
 workspace = true

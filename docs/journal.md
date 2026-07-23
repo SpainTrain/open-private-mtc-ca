@@ -84,3 +84,17 @@ Decisions:
 
 Open questions:
 - (none)
+
+## 2026-07-23 — ca-clock: migrated acme-core's local clock seam to the shared clock crate
+
+**Ticket**: mtc-crd
+**PR**: —
+
+Decisions:
+- Deleted crates/acme-core/src/clock.rs (Clock/MonotonicMillis/MonotonicClock/ManualClock); acme-core now depends on crates/clock (path dep) and uses clock::Clock (Arc<dyn Clock>) at its AcmeState seam, clock::SystemClock in production (main.rs, examples/demo_client.rs), clock::FakeClock in tests/dev.
+- NonceStore expiry moved from monotonic-Instant-elapsed MonotonicMillis to wall-clock SystemTime via clock::Clock::now(), matching the workspace Clock trait (spec §22.11: SystemTime-based only, no monotonic variant). TTL semantics unchanged (5-min default; exact-deadline and one-ms-past-deadline behavior still covered by tests).
+- The scoped #[allow(clippy::disallowed_methods)] on Instant::now() that lived in acme-core's local seam is gone; crates/clock::SystemClock remains the workspace's one sanctioned ambient-time read site (rule no-systemtime-now-in-prod).
+- Fixed two clippy::duration_suboptimal_units findings the migration surfaced in nonce.rs tests (Duration::from_millis(1_000/2_000) -> from_secs(1/2)).
+
+Open questions:
+- Discovered, not fixed (out of scope — crates/clock belongs to a different ticket): crates/clock/src/fake.rs's non-tokio `notify_waiters(&self) {}` stub fails clippy (unused_self, missing_const_for_fn) whenever clock builds with default (non-tokio) features — reproduces standalone via `cargo clippy -p clock --all-targets -- -D warnings`, with zero involvement from acme-core. Dormant under `cargo clippy --workspace --all-targets --all-features -- -D warnings` (feature unification turns clock's tokio feature on workspace-wide) but live under `scripts/agent-precheck.sh` / `scripts/verify-task.sh`, which invoke clippy without `--all-features` — both currently FAIL at the "workspace lint" step on this. Needs a follow-up bead against crates/clock.
