@@ -1,0 +1,28 @@
+# Core MTC domain library (core-mtc-library epic, ticket core-mtc-types).
+#
+# Clean-room Rust types for draft-ietf-plants-merkle-tree-certs concepts
+# (spec §2), following the repo type patterns: newtypes (§22.1), phantom-typed
+# IDs (§22.5), `thiserror` error enums (§22.6). Tree operations, wire-format
+# serialization, and signing land in separate tickets — this crate is types
+# only.
+[package]
+name = "mtc"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Core Merkle Tree Certificate domain newtypes and spec primitive types (clean-room, draft-ietf-plants-merkle-tree-certs)"
+publish = false
+
+[dependencies]
+thiserror = { workspace = true }
+
+[dev-dependencies]
+# Not in [workspace.dependencies]; pinned here for the compile-fail test
+# harness only (spec §22.1 guarantee is proven by tests/compile_fail/).
+trybuild = "1.0"
+
+[lints]
+workspace = true
