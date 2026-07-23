@@ -1,0 +1,18 @@
+# Redocly CLI configuration for the admin API spec lint (spec §17.2, §19.1).
+# Run via scripts/api-gen.sh (or `make api-lint`); the CLI version is pinned
+# there so lint results are reproducible.
+apis:
+  admin:
+    root: ./admin.openapi.yaml
+extends:
+  - recommended
+rules:
+  # The seed spec has no auth yet; authn/z arrives with the admin-surface epic
+  # (IAM-signed requests, spec §17.3). Re-enable when securitySchemes land.
+  security-defined: off
+  # The only documented server is the local dev instance (`make demo`,
+  # localhost:8080) — this project is laptop-only by design (README).
+  no-server-example.com: off
+  # Health probes (/healthz, /readyz) intentionally have no 4xx responses;
+  # /readyz signals failure via 503 per spec §20.5.
+  operation-4xx-response: off
