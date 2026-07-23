@@ -1,4 +1,23 @@
 
+# Rust
+/target/
+**/target/
+*.rs.bk
+
+# Node / TypeScript (infra/ CDK app, generated TS clients)
+node_modules/
+*.tsbuildinfo
+
+# AWS CDK synth output
+cdk.out/
+**/cdk.out/
+
+# LocalStack / dev-environment volumes and state
+.localstack/
+volume/
+**/localstack-volume/
+.softhsm/
+
 # Beads / Dolt files (added by bd init)
 .dolt/
 *.db
