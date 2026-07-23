@@ -1,0 +1,7 @@
+[package]
+name = "fixture-base"
+version = "0.1.0"
+edition = "2021"
+description = "Fixture base crate exercising grouped pub-use re-exports"
+
+[dependencies]

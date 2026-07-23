@@ -1,0 +1,8 @@
+[package]
+name = "fixture-consumer"
+version = "0.1.0"
+edition = "2021"
+description = "Fixture crate depending on fixture-base, to test DEPENDS ON / USED BY"
+
+[dependencies]
+fixture-base = { path = "../base" }
