@@ -1,0 +1,52 @@
+# Second-region LocalStack overlay for exercising the replication simulator
+# (ticket dev-crr-replication-sim, spec §18.3) — a two-instance harness for
+# `dev-replicator`'s own tests/demo, NOT the three-region topology
+# (`dev-multiregion-harness` owns that; it is expected to layer its own
+# per-region CA-service overlay the same way this file does).
+#
+# This is a Compose *override* file: it adds one service to the same
+# `mtc-local` project without editing docker-compose.yml, so the
+# single-region default (`make dev-env-up`, i.e. `docker compose -f
+# docker-compose.yml up`) is completely untouched. Bring both up together:
+#
+#   docker compose \
+#     -f deploy/local/docker-compose.yml \
+#     -f deploy/local/docker-compose.replication-sim.yml \
+#     up -d --wait
+#
+# or via `make replication-sim-up` (mk/replication-sim.mk).
+#
+# `localstack-b` reuses the same init.d scripts as the primary instance
+# (deploy/local/localstack/init/) — they read bucket/table names from env,
+# so "region B" provisions the identically-named bucket/table the primary
+# region has, matching production CRR/Global Tables (same resource names
+# replicated across regions, spec §8.1/§8.2).
+
+name: mtc-local
+
+services:
+  localstack-b:
+    image: localstack/localstack:4.14.0
+    container_name: mtc-localstack-b
+    ports:
+      - "127.0.0.1:4567:4566"
+    environment:
+      SERVICES: s3,dynamodb
+      EAGER_SERVICE_LOADING: "1"
+      SKIP_SSL_CERT_DOWNLOAD: "1"
+      DISABLE_EVENTS: "1"
+      MTC_LOG_BUCKET: mtc-log-local
+      MTC_COORDINATION_TABLE: mtc-log-coordination
+    volumes:
+      - ./localstack/init/boot.d:/etc/localstack/init/boot.d:ro
+      - ./localstack/init/ready.d:/etc/localstack/init/ready.d:ro
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -sf http://localhost:4566/_localstack/health >/dev/null && test -f /tmp/mtc_init_done",
+        ]
+      interval: 2s
+      timeout: 5s
+      retries: 45
+      start_period: 5s

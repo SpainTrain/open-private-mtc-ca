@@ -101,8 +101,12 @@ same commands the container entrypoint runs (`deploy/local/softhsm/entrypoint.sh
   than real S3 — do not treat local as proof of append-only enforcement.
 - No persistence: LocalStack state is lost when the container stops (that is
   fine — `dev-env-up` re-provisions in seconds).
-- Single region only; DynamoDB Global Tables / CRR simulation is the
-  multi-region epic (§18.3).
+- Single region by default. A second LocalStack instance for exercising S3
+  CRR / DynamoDB Global Tables replication is available as a Compose
+  *override* — `docker-compose.replication-sim.yml` — layered on top of this
+  file without changing it (`make replication-sim-up`); see
+  `crates/dev-replicator` and `mk/replication-sim.mk`. The full three-region
+  topology is the multi-region epic (§18.3, `dev-multiregion-harness`).
 - SoftHSM2 is explicitly non-FIPS (§14.4).
 
 ## Out of scope here
@@ -110,3 +114,9 @@ same commands the container entrypoint runs (`deploy/local/softhsm/entrypoint.sh
 `make demo` orchestration, CA service startup, sample ACME client, and the
 admin UI belong to the local-dev-experience epic (§18.1). This directory only
 provides the substrate: LocalStack + SoftHSM2 + provisioning.
+
+Replication simulation between LocalStack instances
+(`docker-compose.replication-sim.yml`, `crates/dev-replicator`) is documented
+separately — see that crate's module docs and `mk/replication-sim.mk`. It
+extends this directory (a second LocalStack instance) without modifying
+`docker-compose.yml`, `local.env`, or any single-region behavior above.
