@@ -8,10 +8,11 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::time::{Duration, SystemTime};
 
 use base64ct::{Base64UrlUnpadded, Encoding};
+use clock::Clock;
 
-use crate::clock::{Clock, MonotonicMillis};
 use crate::error::AcmeError;
 
 /// Default nonce lifetime: 5 minutes.
@@ -53,7 +54,7 @@ impl fmt::Display for Nonce {
 pub struct NonceStore {
     ttl_millis: u64,
     /// nonce -> expiry deadline.
-    issued: HashMap<Nonce, MonotonicMillis>,
+    issued: HashMap<Nonce, SystemTime>,
 }
 
 impl NonceStore {
@@ -72,13 +73,13 @@ impl NonceStore {
     /// # Errors
     /// [`AcmeError::Internal`] if the OS RNG fails.
     pub fn issue(&mut self, clock: &dyn Clock) -> Result<Nonce, AcmeError> {
-        let now = clock.monotonic_now();
+        let now = clock.now();
         self.prune_expired(now);
         let mut buf = [0u8; NONCE_BYTES];
         getrandom::fill(&mut buf).map_err(|e| AcmeError::Internal(format!("os rng: {e}")))?;
         let nonce = Nonce(Base64UrlUnpadded::encode_string(&buf));
         self.issued
-            .insert(nonce.clone(), now.saturating_add(self.ttl_millis));
+            .insert(nonce.clone(), now + Duration::from_millis(self.ttl_millis));
         Ok(nonce)
     }
 
@@ -88,7 +89,7 @@ impl NonceStore {
     /// [`AcmeError::BadNonce`] if the nonce was never issued, already
     /// consumed, or has expired.
     pub fn consume(&mut self, nonce: &Nonce, clock: &dyn Clock) -> Result<(), AcmeError> {
-        let now = clock.monotonic_now();
+        let now = clock.now();
         match self.issued.remove(nonce) {
             Some(deadline) if now <= deadline => Ok(()),
             // Expired (already removed above) or unknown: same client-visible error.
@@ -102,7 +103,7 @@ impl NonceStore {
         self.issued.len()
     }
 
-    fn prune_expired(&mut self, now: MonotonicMillis) {
+    fn prune_expired(&mut self, now: SystemTime) {
         self.issued.retain(|_, deadline| now <= *deadline);
     }
 }
@@ -112,11 +113,11 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::clock::ManualClock;
+    use clock::FakeClock;
 
     #[test]
     fn issued_nonce_is_consumable_exactly_once() {
-        let clock = ManualClock::new();
+        let clock = FakeClock::default();
         let mut store = NonceStore::new(DEFAULT_NONCE_TTL_MILLIS);
         let nonce = store.issue(&clock).expect("issue");
         assert_eq!(store.consume(&nonce, &clock), Ok(()));
@@ -125,7 +126,7 @@ mod tests {
 
     #[test]
     fn unknown_nonce_is_rejected() {
-        let clock = ManualClock::new();
+        let clock = FakeClock::default();
         let mut store = NonceStore::new(DEFAULT_NONCE_TTL_MILLIS);
         let forged = Nonce::from_client("AAAAAAAAAAAAAAAAAAAAAA");
         assert_eq!(store.consume(&forged, &clock), Err(AcmeError::BadNonce));
@@ -133,38 +134,38 @@ mod tests {
 
     #[test]
     fn expired_nonce_is_rejected() {
-        let clock = ManualClock::new();
+        let clock = FakeClock::default();
         let mut store = NonceStore::new(1_000);
         let nonce = store.issue(&clock).expect("issue");
-        clock.advance(1_001);
+        clock.advance(Duration::from_millis(1_001));
         assert_eq!(store.consume(&nonce, &clock), Err(AcmeError::BadNonce));
     }
 
     #[test]
     fn nonce_valid_up_to_its_deadline() {
-        let clock = ManualClock::new();
+        let clock = FakeClock::default();
         let mut store = NonceStore::new(1_000);
         let nonce = store.issue(&clock).expect("issue");
-        clock.advance(1_000); // exactly at the deadline: still valid
+        clock.advance(Duration::from_secs(1)); // exactly at the deadline: still valid
         assert_eq!(store.consume(&nonce, &clock), Ok(()));
     }
 
     #[test]
     fn issue_prunes_expired_nonces() {
-        let clock = ManualClock::new();
+        let clock = FakeClock::default();
         let mut store = NonceStore::new(1_000);
         for _ in 0..10 {
             store.issue(&clock).expect("issue");
         }
         assert_eq!(store.outstanding(), 10);
-        clock.advance(2_000);
+        clock.advance(Duration::from_secs(2));
         store.issue(&clock).expect("issue");
         assert_eq!(store.outstanding(), 1); // the 10 expired ones are gone
     }
 
     #[test]
     fn nonces_are_unique_and_base64url() {
-        let clock = ManualClock::new();
+        let clock = FakeClock::default();
         let mut store = NonceStore::new(DEFAULT_NONCE_TTL_MILLIS);
         let a = store.issue(&clock).expect("issue");
         let b = store.issue(&clock).expect("issue");

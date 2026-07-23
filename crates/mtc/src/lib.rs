@@ -31,9 +31,14 @@
 #![allow(clippy::multiple_crate_versions)]
 
 pub mod error;
+pub mod tree;
 pub mod types;
 pub mod wire;
 
 pub use error::{HashOutputError, IdError};
+pub use tree::{
+    decompose_range, empty_root, hash_leaf, hash_node, Hasher, MerkleTree, Sha256Hasher, Subtree,
+    LEAF_PREFIX, NODE_PREFIX, SHA256_EMPTY_ROOT,
+};
 pub use types::{BatchId, BatchTag, Epoch, HashOutput, Id, Index, LogId, LogTag, TreeSize};
 pub use wire::{TlsParse, TlsReader, TlsSerialize, WireError, U24};

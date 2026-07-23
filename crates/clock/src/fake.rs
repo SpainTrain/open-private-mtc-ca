@@ -158,7 +158,8 @@ impl FakeClock {
 
     /// No async sleepers without the `tokio` feature (or under loom).
     #[cfg(not(all(feature = "tokio", not(loom))))]
-    fn notify_waiters(&self) {}
+    #[allow(clippy::unused_self)] // signature parity with the tokio-enabled variant
+    const fn notify_waiters(&self) {}
 }
 
 /// Starts at [`UNIX_EPOCH`] — a fixed, deterministic origin.

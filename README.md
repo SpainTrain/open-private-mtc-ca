@@ -12,7 +12,7 @@ Everything in this repository is organized around implementing that spec.
 ## What this is (and is not)
 
 This is a **reference blueprint** for evaluating the MTC draft and exploring what
-tier-zero PKI demands — not a product. The non-goals below are load-bearing; they
+tier-zero PKI demands — not a product. The non-goals below are foundational; they
 shape every decision in the repo (see spec §1):
 
 - **No production deployment.** This is not a commercially supported product and

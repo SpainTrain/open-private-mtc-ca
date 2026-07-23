@@ -25,7 +25,7 @@ Where the spec is genuinely ambiguous or two defensible designs diverge in cost,
 
 - Ticket contract: `docs/planning/epics/<epic>.json`, find your slug; Goal / Acceptance Criteria / Out of Scope / Testing / Demo is binding. Spec: `docs/mtc-architecture-spec.md` (read your ticket's cited sections plus §22 type patterns BEFORE coding; cite sections in rustdoc).
 - Obey `.claude/rules/` (16 rules). Run `make agent-precheck` first, `make verify-task` before committing.
-- Rust: `. "$HOME/.cargo/env"`. New crates under `crates/<name>/` (workspace glob — do NOT edit root Cargo.toml). Workspace-pinned deps via `{ workspace = true }`; extra deps pinned in-crate and LISTED in your report. Never commit `Cargo.lock`.
+- Rust: `. "$HOME/.cargo/env"`. New crates under `crates/<name>/` (workspace glob — do NOT edit root Cargo.toml). Workspace-pinned deps via `{ workspace = true }`; extra deps pinned in-crate and LISTED in your report. `Cargo.lock` is committed to the repo on purpose (binary/service workspace, reproducible builds) — but do NOT stage or commit it yourself; the orchestrator regenerates it once at merge to avoid cross-worktree lockfile conflicts.
 - Time comes from `crates/clock` (`Clock` trait) — `SystemTime::now`/`Instant::now` are banned by clippy disallowed-methods.
 - Gates: `cargo test -p <crate>` (unit + property + the ticket's named layers), `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`. Test layers named in the ticket (proptest/fuzz/Kani/Loom) are AC, not suggestions.
 - Make targets live in `mk/<name>.mk` fragments — NEVER create or edit the root Makefile.

@@ -10,12 +10,11 @@
 use std::sync::Arc;
 
 use acme_core::client::{signed_request_body, ClientBinding};
-use acme_core::{
-    router, AcmeState, BaseUrl, ManualClock, DIRECTORY_PATH, NEW_ACCOUNT_PATH, NEW_NONCE_PATH,
-};
+use acme_core::{router, AcmeState, BaseUrl, DIRECTORY_PATH, NEW_ACCOUNT_PATH, NEW_NONCE_PATH};
 use axum::body::Body;
 use axum::http::{header, HeaderMap, Request, StatusCode};
 use axum::Router;
+use clock::FakeClock;
 use http_body_util::BodyExt;
 use p256::ecdsa::SigningKey;
 use tower::ServiceExt;
@@ -77,7 +76,7 @@ fn post_jws(url_path: &str, body: String) -> Request<Body> {
 async fn full_acme_core_flow() {
     let app = router(AcmeState::new(
         BaseUrl::new(BASE),
-        Arc::new(ManualClock::new()),
+        Arc::new(FakeClock::default()),
     ));
     let account_key = SigningKey::from_slice(&[42; 32]).expect("valid scalar");
 
