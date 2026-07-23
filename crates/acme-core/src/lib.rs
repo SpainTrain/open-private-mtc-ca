@@ -20,14 +20,13 @@
 //! `badSignatureAlgorithm`, `malformed`, `unauthorized`,
 //! `accountDoesNotExist`, `badPublicKey`.
 //!
-//! Time is injected via the local [`clock::Clock`] seam (to be replaced by
-//! the shared `crates/clock` once ticket `ca-clock` lands). JWS parsing is
-//! fuzzed (`fuzz/`, spec §19.3) and property-tested to never panic on
-//! arbitrary bytes.
+//! Time is injected via the shared [`clock::Clock`] trait (spec §22.11,
+//! ticket `ca-clock`): `clock::SystemClock` in production, `clock::FakeClock`
+//! in tests. JWS parsing is fuzzed (`fuzz/`, spec §19.3) and property-tested
+//! to never panic on arbitrary bytes.
 
 pub mod account;
 pub mod client;
-pub mod clock;
 pub mod error;
 pub mod jws;
 pub mod nonce;
@@ -35,7 +34,6 @@ pub mod problem;
 pub mod routes;
 
 pub use account::{Account, AccountId, AccountStatus, AccountStore, NewAccountRequest};
-pub use clock::{Clock, ManualClock, MonotonicClock, MonotonicMillis};
 pub use error::{AcmeError, ES256};
 pub use jws::{AccountKeySource, Jwk, JwkThumbprint, Jws, ProtectedHeader};
 pub use nonce::{Nonce, NonceStore, DEFAULT_NONCE_TTL_MILLIS};
