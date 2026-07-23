@@ -1,7 +1,13 @@
-# Dev-environment diagnostics (spec §18.8). Stub today; implemented by the
-# dev-doctor ticket.
+# Dev-environment diagnostics (spec §18.8).
+#
+# `make doctor` checks: Docker daemon, Compose v2, required ports, Rust
+# toolchain, cargo-watch, evcxr_repl, SoftHSM2, LocalStack image, disk space.
+# Each check prints PASS/FAIL/WARN with copy-pasteable remediation.
 
-.PHONY: doctor
+.PHONY: doctor doctor-test
 
 doctor: ## Diagnose the dev environment and suggest fixes
-	$(call not_implemented,dev-doctor)
+	@scripts/doctor.sh
+
+doctor-test: ## Smoke-test doctor diagnostics (exit codes, output format)
+	@scripts/doctor-test.sh
