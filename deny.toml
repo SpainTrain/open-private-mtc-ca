@@ -1,0 +1,147 @@
+# Supply-chain policy: license allow-list, security-advisory checks, the
+# duplicate-dependency allowlist, and trusted dependency sources (spec §6
+# licensing table, §22.13 required CI checks). Full rationale, including why
+# each duplicate/exception exists, lives in docs/license-policy.md.
+#
+# Run locally: `cargo deny check` (all four sub-checks below), or scope to
+# one with `cargo deny check licenses|bans|advisories|sources`. Wired as the
+# `cargo-deny` required CI job (.github/workflows/ci.yml). Config schema:
+# https://embarkstudios.github.io/cargo-deny/
+
+[graph]
+# Match the workspace's own CI convention: `cargo test --all-features` and
+# `cargo clippy --all-targets --all-features` (spec §22.13) already compile
+# every optional feature together on every PR — including mtc-admin-api-
+# client's `native-tls` *and* `rustls` TLS backends and mtc-admin-api-
+# server's opt-in `conversion`/frunk feature simultaneously. If those
+# features pulled in a non-permissive license, a default-features-only graph
+# would never see it. `all-features = true` here checks exactly what the
+# rest of CI already builds — not a larger surface than what ships, and not
+# a smaller one that leaves optional features unchecked. This does mean the
+# `[bans] skip` list below has to name a couple of duplicates that only
+# exist because both TLS backends are considered at once; each entry says so.
+all-features = true
+
+[output]
+feature-depth = 1
+
+# -----------------------------------------------------------------------------
+# licenses (spec §6 licensing table): permissive-only allow-list.
+#
+# cargo-deny >=0.18.4 removed the `[licenses] deny` field entirely — "all
+# licenses are denied unless explicitly allowed" is now the *only*
+# enforcement mechanism, so this `allow` list IS the ban: AGPL-3.0 (and every
+# other copyleft license — GPL, LGPL, SSPL, ...) is banned by omission and
+# must never be added below. This is the direct encoding of spec §6's
+# "Approach to mtc-bridge" constraint: DigiCert mtc-bridge is AGPL-3.0 and
+# cannot be forked. See docs/license-policy.md for the full rationale and the
+# negative-test evidence that this actually rejects an AGPL dependency.
+#
+# Every entry below is required by at least one crate currently in the
+# workspace's `--all-features` dependency graph (verified via `cargo metadata
+# --all-features`); this is not a speculative list of "licenses we might
+# need". BSD-2-Clause is the one exception — kept because spec §6 explicitly
+# cites it (the vendored htmx.min.js asset, SEC-SC-05), even though no Rust
+# crate needs it today; `cargo deny` will note it as unused rather than fail.
+# -----------------------------------------------------------------------------
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    # File-scoped weak copyleft (modifications to the MPL-licensed files
+    # themselves must stay MPL; linking/combining with non-MPL code is
+    # unrestricted) — distinct from the whole-program copyleft (GPL/AGPL
+    # family) this policy bans. Required by `cssparser` and `dtoa-short`,
+    # transitive deps of `ammonia` (HTML sanitizer, mtc-admin-api-server).
+    "MPL-2.0",
+    # Community Data License Agreement, Permissive variant — a permissive
+    # data license (Apache/MIT-equivalent terms for datasets rather than
+    # code). Required by `webpki-root-certs` (native TLS roots, pulled via
+    # `reqwest`/rustls in mtc-admin-api-client).
+    "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.8
+exceptions = []
+
+[licenses.private]
+# All first-party crates/* are `publish = false` (internal) and already carry
+# `license.workspace = true` = Apache-2.0 (already in `allow` above), so this
+# just keeps the check scoped to third-party dependencies.
+ignore = true
+
+# -----------------------------------------------------------------------------
+# bans: duplicate-dependency policy. docs/lint-policy.md deviation 6 delegates
+# this check to cargo-deny (clippy::multiple_crate_versions is allowed
+# workspace-wide because it can't express a scoped exception; this can).
+#
+# `multiple-versions = "deny"` fails the check on ANY duplicate that isn't
+# explicitly allow-listed via `skip` below. Every entry must name the
+# concrete crate + version range and say why — this is a real, reviewed
+# allowlist, not a blanket silence. Verify the current duplicate set with:
+#   cargo tree --workspace -e normal,build -d
+# -----------------------------------------------------------------------------
+[bans]
+multiple-versions = "deny"
+highlight = "all"
+
+skip = [
+    # The generated admin-api crates (mtc-admin-api-server via
+    # `async-trait`/`serde_derive`/`serde_repr`/`validator_derive`/
+    # `thiserror`, spec §17.5 openapi-generator output) resolve `syn` 3.x,
+    # while the rest of the workspace's proc-macro deps (`darling`,
+    # `futures-macro`, `tokio-macros`, `tracing-attributes`, `strum_macros`,
+    # ...) are still on `syn` 2.x. Both are proc-macro-only build-time
+    # dependencies (no runtime code shipped, no additional license/advisory
+    # surface beyond what's already covered above). Tracked, not silenced:
+    # drop this pair once the slower-moving macro crates publish a syn-3
+    # compatible release. See docs/license-policy.md.
+    { crate = "syn@2", reason = "workspace proc-macro deps (darling, futures-macro, tokio-macros, tracing-attributes, ...) are on syn 2; generated admin-api crates pull syn 3 -- see docs/license-policy.md" },
+    { crate = "syn@3", reason = "generated admin-api crates (async-trait, serde_derive, validator_derive, thiserror) pull syn 3; rest of workspace is on syn 2 -- see docs/license-policy.md" },
+
+    # Three `getrandom` generations coexist, each from a different, real
+    # dependency edge: RustCrypto's `p256`/`ecdsa`/`elliptic-curve` chain
+    # (acme-core's ES256 JWS verification, spec §10) depends on `rand_core`
+    # 0.6 -> `getrandom` 0.2; `acme-core`'s own direct dependency and the
+    # workspace's `proptest` dev-dependency use the newer `rand`/`rand_core`
+    # 0.9 line -> `getrandom` 0.3; `tempfile` (a transitive dep of
+    # `native-tls`/`proptest`) depends on `getrandom` 0.4. `getrandom`
+    # 0.2/0.3/0.4 each target-conditionally depend on the UEFI shim crate
+    # `r-efi` (only compiled for `*-unknown-uefi`, a target this project
+    # never builds for), which is why `r-efi` shows up as its own duplicate
+    # pair below. Tracked, not silenced: drop entries as the RustCrypto/
+    # tempfile dependency chains catch up. See docs/license-policy.md.
+    { crate = "getrandom@0.2", reason = "RustCrypto p256/ecdsa/elliptic-curve chain (acme-core ES256) depends on rand_core 0.6 -> getrandom 0.2 -- see docs/license-policy.md" },
+    { crate = "getrandom@0.3", reason = "acme-core direct dep + proptest's rand/rand_core 0.9 chain -> getrandom 0.3 -- see docs/license-policy.md" },
+    { crate = "getrandom@0.4", reason = "tempfile (via native-tls/proptest) depends on getrandom 0.4 -- see docs/license-policy.md" },
+    { crate = "r-efi@5", reason = "getrandom 0.3's UEFI-only target-conditional dependency (never built: this project has no *-unknown-uefi target) -- see docs/license-policy.md" },
+    { crate = "r-efi@6", reason = "getrandom 0.4's UEFI-only target-conditional dependency (never built: this project has no *-unknown-uefi target) -- see docs/license-policy.md" },
+
+    # mtc-admin-api-server's opt-in `conversion` feature (frunk-based DTO
+    # mapping, only reachable via `--all-features`, spec §17.5) pulls two
+    # `frunk_core` versions: `frunk` 0.4.4 depends on `frunk_core` 0.4.4
+    # directly, while `frunk-enum-derive`/`frunk_derives`/`frunk_proc_macros`
+    # (used by the same `conversion` feature) depend on `frunk_core` 0.5.0 --
+    # a version skew inside the `frunk` crate family itself, not something
+    # this workspace controls. Tracked, not silenced: drop once the `frunk`
+    # ecosystem re-aligns on one `frunk_core` version. See
+    # docs/license-policy.md.
+    { crate = "frunk_core@0.4", reason = "frunk 0.4.4 (admin-api-server's optional `conversion` feature) depends on frunk_core 0.4.4 -- see docs/license-policy.md" },
+    { crate = "frunk_core@0.5", reason = "frunk-enum-derive/frunk_derives/frunk_proc_macros (same `conversion` feature) depend on frunk_core 0.5.0 -- see docs/license-policy.md" },
+]
+
+# -----------------------------------------------------------------------------
+# advisories: RustSec advisory DB (spec §22.13). Empty `ignore` — no advisory
+# has ever needed suppressing. If/when one does, add it here with a `reason`,
+# never a blanket suppression. `cargo audit` (a separate required CI job,
+# config: .cargo/audit.toml) runs the same advisory DB independently, so a
+# misconfigured cargo-deny run doesn't silently drop advisory coverage.
+# -----------------------------------------------------------------------------
+[advisories]
+db-urls = ["https://github.com/rustsec/advisory-db"]
+ignore = []
+yanked = "deny"

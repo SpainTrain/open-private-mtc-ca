@@ -33,10 +33,16 @@ is the job name (PR checks display them as `CI / <job name>`).
 | `clippy`   | `cargo clippy --workspace --all-targets --all-features -- -D warnings` | §22.13 |
 | `test`     | `cargo test --workspace --all-features` | §22.13 |
 | `doctest`  | `cargo test --workspace --doc` | §22.13 |
+| `cargo-deny` | `cargo deny check` (license + advisory + duplicate-dependency + source checks; config `deny.toml`) | §22.13, §6 |
+| `cargo-audit` | `cargo audit` (RustSec security advisories; config `.cargo/audit.toml`) | §22.13 |
 
 Note: branch protection itself is repository configuration on GitHub and is
-not applied by this repo's code. When enabling it, require all four checks
+not applied by this repo's code. When enabling it, require all six checks
 above and "Require branches to be up to date before merging".
+
+License and supply-chain policy rationale (permissive-only allow-list, why
+AGPL is banned, the duplicate-dependency allowlist): see
+[`docs/license-policy.md`](license-policy.md).
 
 ## Planned required checks (owned by other tickets)
 
@@ -45,8 +51,6 @@ to the table above when they merge:
 
 | Future check | Ticket (beads slug) |
 |--------------|---------------------|
-| `cargo deny check` (license + advisory + duplicate deps) | `fnd-license-policy` |
-| `cargo audit` (security advisories) | `fnd-license-policy` |
 | API spec validation + breaking-change + codegen drift | `fnd-ci-api-spec-check` |
 | `cargo kani` (path-filtered, critical-path crates only) | `fnd-ci-kani-gate` |
 | infra/ lane: `tsc`, eslint, CDK assertions, `cdk synth` (path-filtered) | `fnd-ci-infra-checks` |
@@ -62,6 +66,8 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 cargo test --workspace --doc
+cargo deny check
+cargo audit
 ```
 
 These are byte-for-byte the commands CI runs, so a locally green tree should

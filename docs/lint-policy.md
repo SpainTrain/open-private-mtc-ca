@@ -82,7 +82,11 @@ Each entry states what is relaxed, where, and why.
    transitive dupe (the generated admin-api crates pull `syn` 2 and 3)
    fails every crate with a finding no crate can act on. Duplicate-version
    policy belongs to cargo-deny (`fnd-license-policy` ticket), which has a
-   real allowlist and reports once, at the workspace level.
+   real allowlist and reports once, at the workspace level: see
+   [`deny.toml`](../deny.toml)'s `[bans] skip` list (currently `syn` 2/3 and
+   `getrandom` 0.2/0.3, each with a named reason) and
+   [`docs/license-policy.md`](license-policy.md#duplicate-dependency-allowlist)
+   for the full rationale and how to keep it current.
 
 ## Known gotchas
 

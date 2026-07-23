@@ -1,0 +1,15 @@
+# cargo-audit configuration (spec §22.13 required check; ticket
+# fnd-license-policy). Rationale: docs/license-policy.md. Run locally with
+# `cargo audit`; wired as the `cargo-audit` required CI job
+# (.github/workflows/ci.yml). Schema: https://docs.rs/cargo-audit/latest/cargo_audit/config/index.html
+#
+# Policy: the ignore list starts, and stays, empty. No RustSec advisory has
+# ever needed suppressing here. If one ever does, add its RUSTSEC-* ID below
+# with an inline comment explaining precisely why it doesn't apply to this
+# workspace (e.g. the vulnerable code path is never reached) — never a
+# blanket suppression, and never remove an advisory without saying why in the
+# same PR that adds it. cargo-deny's own `[advisories]` section (deny.toml)
+# checks the same RustSec advisory database independently, so the two checks
+# don't share a single point of failure.
+[advisories]
+ignore = []
