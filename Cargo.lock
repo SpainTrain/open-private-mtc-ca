@@ -1635,10 +1635,13 @@ dependencies = [
 name = "mtc"
 version = "0.1.0"
 dependencies = [
+ "p256",
  "proptest",
+ "rand_core 0.6.4",
  "sha2",
  "thiserror",
  "trybuild",
+ "zeroize",
 ]
 
 [[package]]
