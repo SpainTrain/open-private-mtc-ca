@@ -1,0 +1,45 @@
+# ACME server core (RFC 8555): directory, new-nonce, new-account, and ES256
+# JWS verification. This is the HTTP face of the native ACME adapter (spec
+# §10) — the first EntryIntake adapter. Order/authz flow (ca-acme-orders) and
+# finalize/issuance + EntryIntake wiring (ca-acme-issuance) are separate
+# tickets and deliberately absent here.
+#
+# Fuzzing: `fuzz/` holds a cargo-fuzz package (own workspace root, spec §19.3)
+# targeting JWS/request-body parsing. Run with `cargo +nightly fuzz run
+# fuzz_jws_parse` from `crates/acme-core/fuzz`.
+[package]
+name = "acme-core"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# Workspace-pinned baseline (root Cargo.toml).
+serde = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "macros", "io-util"] }
+# Binary-only (src/main.rs, examples): eyre + color-eyre per
+# thiserror-for-libs-eyre-for-bins; the library surface uses thiserror.
+eyre = { workspace = true }
+color-eyre = { workspace = true }
+
+# Crate-local pins — not yet in the workspace baseline; promote to
+# [workspace.dependencies] when a second crate needs them.
+axum = "0.8"
+serde_json = "1"
+p256 = "0.13"
+sha2 = "0.10"
+base64ct = { version = "1", features = ["alloc"] }
+getrandom = "0.3"
+
+[dev-dependencies]
+proptest = { workspace = true }
+pretty_assertions = { workspace = true }
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
