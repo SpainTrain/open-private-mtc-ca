@@ -58,8 +58,9 @@
 //!
 //! `cargo test -p cloud-memory` runs green with Docker stopped: unit tests
 //! run in well under a second, and [`MemoryHsm`] never leaves the process
-//! (`RustCrypto` `p256`, not a real HSM). See [`MemoryHsm::is_fips_validated`]
-//! for the corresponding honesty requirement.
+//! (`RustCrypto` `p256`, not a real HSM). See
+//! [`Hsm::is_fips_validated`](cloud_types::Hsm::is_fips_validated) for the
+//! corresponding honesty requirement.
 
 #![warn(missing_docs)]
 
