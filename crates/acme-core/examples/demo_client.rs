@@ -20,7 +20,8 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use acme_core::client::{signed_request_body, ClientBinding};
-use acme_core::{router, AcmeState, BaseUrl, MonotonicClock};
+use acme_core::{router, AcmeState, BaseUrl};
+use clock::SystemClock;
 use eyre::{ensure, eyre, WrapErr};
 use p256::ecdsa::SigningKey;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -105,7 +106,7 @@ async fn main() -> eyre::Result<()> {
         .wrap_err("bind")?;
     let addr = listener.local_addr().wrap_err("local addr")?;
     let base = format!("http://{addr}");
-    let state = AcmeState::new(BaseUrl::new(&*base), Arc::new(MonotonicClock::new()));
+    let state = AcmeState::new(BaseUrl::new(&*base), Arc::new(SystemClock));
     tokio::spawn(async move {
         if let Err(err) = axum::serve(listener, router(state)).await {
             eprintln!("server error: {err}");

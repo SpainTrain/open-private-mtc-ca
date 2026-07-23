@@ -18,8 +18,9 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Serialize;
 
+use clock::Clock;
+
 use crate::account::{Account, AccountStore, NewAccountRequest};
-use crate::clock::Clock;
 use crate::error::AcmeError;
 use crate::jws::{AccountKeySource, Jws};
 use crate::nonce::{Nonce, NonceStore, DEFAULT_NONCE_TTL_MILLIS};
@@ -291,14 +292,15 @@ mod tests {
     use pretty_assertions::assert_eq;
     use tower::ServiceExt;
 
+    use clock::FakeClock;
+
     use super::*;
     use crate::client::{signed_request_body, ClientBinding};
-    use crate::clock::ManualClock;
 
     const BASE: &str = "http://localhost";
 
     fn test_state() -> AcmeState {
-        AcmeState::new(BaseUrl::new(BASE), Arc::new(ManualClock::new()))
+        AcmeState::new(BaseUrl::new(BASE), Arc::new(FakeClock::default()))
     }
 
     fn test_key(seed: u8) -> SigningKey {
@@ -454,13 +456,13 @@ mod tests {
 
     #[tokio::test]
     async fn expired_nonce_is_rejected() {
-        let clock = Arc::new(ManualClock::new());
+        let clock = Arc::new(FakeClock::default());
         let state =
-            AcmeState::with_nonce_ttl(BaseUrl::new(BASE), Arc::<ManualClock>::clone(&clock), 1_000);
+            AcmeState::with_nonce_ttl(BaseUrl::new(BASE), Arc::<FakeClock>::clone(&clock), 1_000);
         let app = router(state);
         let key = test_key(1);
         let nonce = fetch_nonce(&app).await;
-        clock.advance(1_001);
+        clock.advance(std::time::Duration::from_millis(1_001));
         let (status, _, body) = send(&app, post_new_account(new_account_body(&key, &nonce))).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(body["type"], "urn:ietf:params:acme:error:badNonce");
