@@ -84,3 +84,29 @@ Decisions:
 
 Open questions:
 - (none)
+
+## 2026-07-23 — dev-crr-replication-sim: added crates/dev-replicator (S3 CRR + DDB Global Tables replication simulator).
+
+**Ticket**: dev-crr-replication-sim
+**PR**: —
+
+Decisions: scan-diff (not DynamoDB Streams) for DDB tailing + hidden-timestamp
+conditional-write LWW (ADR-0003); one process = one directed link, replicating
+whichever of {S3 bucket, DDB table} are configured; lag/pause/stall live behind
+a small local HTTP control endpoint, runtime-adjustable via a watch channel;
+folded in the mr-replication-sim (multi-region epic) duplicate's extra AC
+(runtime-adjustable lag incl. stall, documented LWW conflict semantics).
+Extended deploy/local/ with docker-compose.replication-sim.yml, a Compose
+override adding a second LocalStack instance -- the base docker-compose.yml
+and local.env are untouched (verified: config diff empty, service list
+unchanged). Verified live: tests/e2e/replication-sim-demo.sh (4/4 integration
+tests) plus a manual dev-replicator binary run against two real LocalStack
+containers exercising lag, Object Lock metadata preservation, runtime
+stall/catch-up, and pause/resume.
+Discovered (not fixed, out of scope): crates/clock/src/fake.rs non-tokio
+notify_waiters() fails clippy::unused_self + missing_const_for_fn --
+pre-existing, breaks 'make lint'/'make agent-precheck' workspace-wide
+regardless of this change. Also tests/e2e/make-targets.sh stub_targets
+still lists api-gen though openapi-codegen-pipeline already implemented it
+(make-targets smoke FAILs on that one line, pre-existing). Neither touched
+here; both worth their own beads.

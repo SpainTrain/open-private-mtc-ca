@@ -1,0 +1,67 @@
+# dev-replicator: local S3 CRR + DynamoDB Global Tables replication simulator
+# (ticket dev-crr-replication-sim, spec §18.3). Copies new S3 object versions
+# and DynamoDB item changes from a source LocalStack endpoint to a target
+# LocalStack endpoint with configurable, runtime-adjustable per-link lag
+# (including stall/infinite lag) — the substrate `dev-multiregion-harness`
+# builds the three-region topology on.
+#
+# Non-workspace deps are pinned in-crate per the parallel-ticket convention;
+# see the ticket report for the full list and rationale (chiefly: this is the
+# first crate in the workspace to talk to the AWS SDK directly — see the
+# "Why this crate talks to the AWS SDK directly" note in src/lib.rs).
+[package]
+name = "dev-replicator"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+description = "Local S3 CRR + DynamoDB Global Tables replication simulator with configurable, runtime-adjustable per-link lag (spec §18.3)"
+
+[[bin]]
+name = "dev-replicator"
+path = "src/bin/dev-replicator.rs"
+
+[dependencies]
+# Workspace-pinned baseline.
+serde = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "net", "signal", "sync", "io-util"] }
+tracing = { workspace = true, features = ["attributes"] }
+# Binary-only (src/bin/dev-replicator.rs): eyre + color-eyre per
+# thiserror-for-libs-eyre-for-bins; the library surface uses thiserror.
+eyre = { workspace = true }
+color-eyre = { workspace = true }
+
+# In-process repo dependency: injected time source (rule
+# no-systemtime-now-in-prod, §22.11) for stamping discovery/replication
+# events. Not a workspace dep (path deps aren't promoted there); wired the
+# same way other in-repo crate deps are.
+clock = { path = "../clock" }
+
+# Crate-local pins — not yet in the workspace baseline; promote when a second
+# crate needs them (mirrors the acme-core / metrics precedent).
+axum = "0.8"
+serde_json = "1"
+# AWS SDK clients, built per-link from an explicit endpoint/region/static
+# test-credential Config (never the ambient env-var default chain — a single
+# link talks to *two different* endpoints, so per-client explicit config is
+# required correctness, not just cleanliness). rustls (not the default
+# aws-lc) keeps the build lighter; LocalStack terminates plain HTTP anyway.
+aws-sdk-s3 = { version = "1", default-features = false, features = ["rt-tokio", "rustls"] }
+aws-sdk-dynamodb = { version = "1", default-features = false, features = ["rt-tokio", "rustls"] }
+# Log/lag output for the demo binary (spec §18.3 "watch the object appear").
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+proptest = { workspace = true }
+pretty_assertions = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "sync", "test-util"] }
+# axum router unit tests (control.rs), same pattern as acme-core's dev-deps.
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+
+[lints]
+workspace = true
