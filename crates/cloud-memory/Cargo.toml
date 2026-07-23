@@ -1,0 +1,47 @@
+# cloud-memory: pure in-memory implementations of the four cloud-types traits
+# (ObjectStore, ObjectLock, ReplicatedKv, Hsm) — spec §9.3, §9.6. Zero external
+# dependencies: no Docker, no LocalStack, no SoftHSM. This is the crate every
+# other crate unit-tests against; the shared `cloud-test-suite` conformance
+# suites (separate tickets) will run against it too.
+[package]
+name = "cloud-memory"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Pure in-memory implementations of the cloud-types traits (ObjectStore, ObjectLock, ReplicatedKv, Hsm) for zero-dependency unit tests and local dev (spec §9.3, §9.6)"
+publish = false
+
+[dependencies]
+cloud-types = { path = "../cloud-types" }
+# Injected time source (spec §22.11): retention-window checks in
+# MemoryObjectLock read time only through Arc<dyn Clock>, never
+# SystemTime::now() directly (rule no-systemtime-now-in-prod).
+clock = { path = "../clock" }
+# Matches the trait signatures in cloud-types (async fn in a dyn-compatible
+# trait). Not in [workspace.dependencies] yet; pinned here per the
+# parallel-ticket convention (reconciled at merge).
+async-trait = "0.1"
+# MemoryHsm: ECDSA P-256 (spec §14.1). "ecdsa" for sign/verify, "pkcs8" for
+# SubjectPublicKeyInfo DER export/import (the interoperable exchange format
+# every Hsm backend must produce). Version pinned to match crates/acme-core's
+# existing p256 dependency.
+p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
+# CSPRNG bytes for in-HSM key generation. Version pinned to match
+# crates/acme-core's existing getrandom dependency.
+getrandom = "0.3"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync"] }
+proptest = { workspace = true }
+pretty_assertions = { workspace = true }
+# Test-only: names the ZeroizeOnDrop trait for a compile-time assertion that
+# MemoryHsm's key material is zeroized on drop (p256::ecdsa::SigningKey
+# implements it via elliptic-curve's default "zeroize" feature) — never used
+# to zeroize anything ourselves.
+zeroize = "1"
+
+[lints]
+workspace = true

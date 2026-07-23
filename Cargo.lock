@@ -362,6 +362,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "cloud-memory"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "clock",
+ "cloud-types",
+ "getrandom 0.3.4",
+ "p256",
+ "pretty_assertions",
+ "proptest",
+ "tokio",
+ "zeroize",
+]
+
+[[package]]
 name = "cloud-types"
 version = "0.1.0"
 dependencies = [
