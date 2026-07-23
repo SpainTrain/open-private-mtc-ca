@@ -1,0 +1,38 @@
+# Typed metrics facade for the spec §20.1 metric set (ticket obs-metrics-core).
+#
+# Workspace-pinned deps use `{ workspace = true }`. Non-workspace deps are
+# pinned in-crate below (prometheus, serde_json, jsonschema) — see the ticket
+# report for the list.
+[package]
+name = "mtc-metrics"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Typed metrics facade for the MTC CA §20.1 metric set: registry, Prometheus text exposition, CloudWatch EMF emission"
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
+tracing = { workspace = true }
+# Non-workspace dependencies, pinned in-crate:
+# prometheus registry + text-format encoder only; the `protobuf` default
+# feature is disabled — we never speak the protobuf exposition format.
+prometheus = { version = "0.14.0", default-features = false }
+# CloudWatch EMF is plain structured JSON (spec §20.1, §22.8 — no AWS SDK types).
+serde_json = "1.0"
+
+[dev-dependencies]
+eyre = { workspace = true }
+pretty_assertions = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal"] }
+# Validates emitted EMF events against the published EMF JSON schema
+# (tests/emf-schema.json). Default features (HTTP/file `$ref` resolution)
+# are disabled — the schema is fully local.
+jsonschema = { version = "0.48.5", default-features = false }
+
+[lints]
+workspace = true
