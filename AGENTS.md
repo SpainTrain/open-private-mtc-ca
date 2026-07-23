@@ -130,7 +130,8 @@ bd prime                # Refresh Beads context
 
 Implementation work is dispatched to tiered personas in `.claude/agents/`
 (impl-mechanical/Haiku, impl-standard/Sonnet, impl-hard/Opus, plus the
-read-only qa-reviewer/Sonnet pre-merge gate). Every bead is worked by the
+read-only qa-reviewer/Sonnet pre-merge gate and the crypto-reviewer/Opus
+specialist audit for crypto-touching beads). Every bead is worked by the
 cheapest persona that can handle it; implementers report `BLOCKED` to
 escalate rather than guessing, and only the orchestrator closes beads —
 on a QA PASS. Full rubric: [docs/agent-delegation.md](docs/agent-delegation.md).

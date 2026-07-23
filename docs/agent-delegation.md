@@ -13,6 +13,7 @@ gate before merge. Personas live in `.claude/agents/`.
 | `impl-standard` | Sonnet | Most feature/crate/adapter/endpoint/test work with a clear ticket contract. Judgment within bead scope. |
 | `impl-hard` | Opus | Tree/proof math, wire-format parsing, crypto/HSM, lease/epoch, Kani/Loom design, security-critical parsing, cross-crate design. |
 | `qa-reviewer` | Sonnet | Adversarial pre-merge review. Read-and-run only (no write tools). Verdict: PASS / FAIL / PASS-WITH-FINDINGS. |
+| `crypto-reviewer` | Opus | Specialist crypto audit on crypto-touching beads only. Read-and-run only. Checklist of known misimplementation classes (domain separation, malleability, nonce hygiene, timing, proof verification, key handling, KATs). |
 
 ## Triage rubric (orchestrator, at dispatch)
 
@@ -57,11 +58,22 @@ over-assignment silently burns the expensive model on trivial work.
    claimed** (implementers never run `bd`).
 2. Orchestrator dispatches `qa-reviewer` on the branch with the implementer's
    report. QA re-runs every gate itself and verdicts.
-3. On **PASS** / **PASS-WITH-FINDINGS**: orchestrator merges, re-verifies on
-   integrated main, closes the bead (`bd close`), files findings as new beads.
-4. On **FAIL**: orchestrator sends the verdict back to the implementer (same
-   agent, same context) for rework, or re-dispatches up a tier.
-5. Only the orchestrator ever merges, closes beads, or pushes.
+3. **Crypto-touching beads additionally get `crypto-reviewer`** (may run in
+   parallel with QA; both must PASS before merge). Triggers — dispatch it when
+   the bead or its diff touches any of: hashing/tree/proof code in
+   `crates/mtc`; signing, checkpoint, or signature verification; JWS/ACME
+   protocol crypto; HSM crates or the `Hsm` trait's contract; key
+   generation/import/ceremony; revocation signing; RNG use in a security
+   context; serialization of any signed structure. Label the bead
+   `crypto-review` when marking it in_progress. When unsure whether it
+   qualifies, it qualifies.
+4. On **PASS** / **PASS-WITH-FINDINGS** (from every required reviewer):
+   orchestrator merges, re-verifies on integrated main, closes the bead
+   (`bd close`), files findings as new beads.
+5. On **FAIL** (from either reviewer): orchestrator sends the verdict back to
+   the implementer (same agent, same context) for rework, or re-dispatches up
+   a tier. Rework goes back through the failing reviewer.
+6. Only the orchestrator ever merges, closes beads, or pushes.
 
 QA hard rule: the review does not exist until the verdict message is sent.
 
