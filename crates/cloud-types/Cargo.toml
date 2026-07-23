@@ -1,0 +1,31 @@
+# cloud-types: trait definitions, common DTOs, and the error taxonomy for the
+# cloud abstraction layer (spec §9.1/§9.3). Backend implementations live in
+# separate crates (cloud-memory, cloud-aws, cloud-localstack, cloud-softhsm)
+# and depend on this one; consumers depend only on this crate plus the Backend
+# factory (§9.4) and never name a concrete backend.
+[package]
+name = "cloud-types"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Cloud-agnostic capability traits (ObjectStore, ObjectLock, ReplicatedKv, Hsm), DTOs, and error taxonomy for the MTC CA (spec §9)"
+publish = false
+
+[dependencies]
+# Object-safe async traits. Spec §9.1 defines the interfaces with
+# `#[async_trait]`; native async-fn-in-trait is not dyn-compatible, and §9.4
+# requires `Arc<dyn Trait>` usage. Not in [workspace.dependencies] — pinned
+# here per the parallel-work convention (root Cargo.toml stays untouched).
+async-trait = "0.1"
+# Typed error enums for library crates (.claude/rules/thiserror-for-libs).
+thiserror = { workspace = true }
+
+[dev-dependencies]
+# Test-only runtime to exercise the traits as `Arc<dyn Trait>` across tasks.
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true
