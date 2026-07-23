@@ -1,0 +1,21 @@
+# Clippy configuration (spec §22.12).
+#
+# `disallowed-methods` enforces rule `no-systemtime-now-in-prod` (§23.2, spec
+# §22.11): production code reads time only through the injected `Clock` trait
+# from crates/clock. `clock::SystemClock` is the one sanctioned wrapper and
+# carries the only production `#[allow(clippy::disallowed_methods)]`; test
+# code that genuinely needs ambient time adds the same scoped allow with a
+# justifying comment (clippy has no test exemption knob for this lint).
+#
+# The lint is warn-by-default; CI's `-D warnings` (spec §22.13) and the local
+# `cargo clippy ... -- -D warnings` invocation promote it to a deny.
+#
+# NOTE (dev-fake-clock ticket): this file seeds only the disallowed-methods
+# list. The strict clippy regime of §22.12 (pedantic/nursery/cargo,
+# unwrap/expect bans, missing_docs) lands with the fnd-rust-lint-config
+# ticket, which extends this file.
+
+disallowed-methods = [
+    { path = "std::time::SystemTime::now", reason = "use the injected `Clock` trait (crates/clock) instead; `clock::SystemClock` is the one sanctioned wrapper — rule no-systemtime-now-in-prod, spec §22.11" },
+    { path = "std::time::Instant::now", reason = "use the injected `Clock` trait (crates/clock) instead — rule no-systemtime-now-in-prod, spec §22.11" },
+]
