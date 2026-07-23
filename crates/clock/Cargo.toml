@@ -1,0 +1,40 @@
+# Injected time source (spec §22.11, §18.4): the `Clock` trait, `SystemClock`
+# (the one sanctioned `SystemTime::now()` wrapper — rule
+# `no-systemtime-now-in-prod`), and a thread-safe `FakeClock` with
+# controllable advancement for deterministic tests and dev-mode time travel.
+[package]
+name = "clock"
+version = "0.1.0"
+description = "Injected Clock trait, SystemClock, and thread-safe FakeClock (spec §22.11, §18.4)"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[features]
+# Fake-clock-driven async sleep/interval helpers for cadence-based loops
+# (spec §18.4 time travel). Off by default so sync-only consumers stay light.
+tokio = ["dep:tokio"]
+
+[dependencies]
+thiserror = { workspace = true }
+# "sync" for the watch channel that wakes FakeClock sleepers; "time" for
+# SystemClock's real sleeps.
+tokio = { workspace = true, features = ["sync", "time"], optional = true }
+
+# Loom concurrency model checking of FakeClock internals (spec §19 test
+# strategy; dep list §26.3). Active only under `RUSTFLAGS="--cfg loom"`:
+#   RUSTFLAGS="--cfg loom" cargo test -p clock --test loom --release
+# Not in [workspace.dependencies] yet; pinned here per the parallel-ticket
+# convention (reconciled at merge).
+[target.'cfg(loom)'.dependencies]
+loom = "0.7"
+
+[dev-dependencies]
+proptest = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "sync"] }
+
+[lints]
+workspace = true
