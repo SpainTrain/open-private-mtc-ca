@@ -31,7 +31,7 @@ stub_targets=(
   test test-unit test-prop test-conformance test-chaos test-soak test-e2e
   repl fixture-load fixture-save time-advance partition-region
   api-gen codemap agent-context
-  fmt lint audit bench doctor
+  audit bench doctor
 )
 
 fail=0
