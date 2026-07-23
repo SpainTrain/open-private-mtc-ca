@@ -12,9 +12,11 @@
 //! - the shared `thiserror` error enums for constructing them (spec
 //!   section 22.6; rule `thiserror-for-libs-eyre-for-bins`).
 //!
-//! Merkle tree operations, wire-format serialization, and checkpoint signing
-//! are deliberately out of scope here; they arrive with the `tree-primitives`
-//! and `mtc-serialization` tickets and build on these types.
+//! Building on these types, the crate also provides Merkle tree operations
+//! (the [`tree`] module, `tree-primitives` ticket) and the TLS-presentation
+//! wire-format codec (the [`wire`] module, `mtc-serialization` ticket).
+//! Checkpoint signing remains out of scope here and arrives with its own
+//! ticket.
 //!
 //! # Lint posture (spec section 22.12)
 //!

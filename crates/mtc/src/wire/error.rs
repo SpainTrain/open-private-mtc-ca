@@ -43,16 +43,22 @@ pub enum WireError {
     /// This is the "impossible size" rejection of spec section 19.3: the
     /// decoder refuses the claim *before* sizing any allocation to it, so an
     /// attacker cannot force an unbounded allocation with a large length field.
+    ///
+    /// `offset` is the position where the body would begin — i.e. immediately
+    /// *after* the already-consumed length prefix, not the prefix's own offset.
+    /// (Fixtures and differential harnesses depend on this: the value is the
+    /// body start, and the docs match the value.)
     #[error(
-        "length prefix at offset {offset} claims {claimed} byte(s) \
+        "length-prefixed body at offset {offset} claims {claimed} byte(s) \
          but only {remaining} remain"
     )]
     LengthOverflow {
-        /// Byte offset of the length prefix that made the claim.
+        /// Byte offset at which the over-long body would begin, immediately
+        /// after the length prefix that announced it.
         offset: usize,
         /// Body length announced by the prefix.
         claimed: usize,
-        /// Bytes remaining after the prefix was read.
+        /// Bytes remaining at `offset` (after the prefix was read).
         remaining: usize,
     },
 

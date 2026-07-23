@@ -4,8 +4,10 @@
 //! Run by the ticket's demo command `cargo test -p mtc serialization`; every
 //! test lives under the `serialization` module so the name filter selects them.
 //! Coverage: round-trip identity with pinned known-answer byte vectors, malformed
-//! and adversarial input rejection, and a property test asserting that parsing
-//! arbitrary byte strings never panics.
+//! and adversarial input rejection, serialization of an unencodable composite
+//! surfacing its error instead of silently truncating (crypto Finding 1), and
+//! property tests asserting that parsing arbitrary byte strings — including with
+//! a recursive codec — never panics.
 
 // Test-only crate: `unwrap`/`expect` are the ergonomic choice here and the
 // production ban does not apply to test code (docs/lint-policy.md notes that
@@ -13,9 +15,63 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 mod serialization {
-    use mtc::wire::{write_opaque_u16, write_vector_u16, TlsReader};
+    use std::io::{self, Write};
+
+    use mtc::wire::{write_opaque_u16, write_opaque_u8, write_vector_u16, TlsReader};
     use mtc::{assert_roundtrip, TlsParse, TlsSerialize, WireError, U24};
     use proptest::prelude::*;
+
+    /// A composite with a single `u8`-length-prefixed opaque field — the
+    /// simplest stand-in for the real spec types (Checkpoint, entries, tiles),
+    /// used to prove serialization of a value that overflows its length prefix
+    /// surfaces the error instead of silently truncating (crypto Finding 1).
+    struct OverflowComposite {
+        field: Vec<u8>,
+    }
+
+    impl TlsSerialize for OverflowComposite {
+        fn tls_serialize<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+            write_opaque_u8(writer, &self.field)
+        }
+    }
+
+    /// A self-nesting codec: a `u8`-length-prefixed vector of itself. Parsing
+    /// arbitrary bytes as this type exercises the recursion depth guard and the
+    /// length-prefixed sub-reader path (F4).
+    #[derive(Debug, PartialEq)]
+    struct Recursive(Vec<Self>);
+
+    impl TlsParse for Recursive {
+        fn tls_parse(reader: &mut TlsReader<'_>) -> Result<Self, WireError> {
+            Ok(Self(reader.read_vector_u8()?))
+        }
+    }
+
+    #[test]
+    fn serialization_composite_overflow_surfaces_error_never_truncates() {
+        // A 256-byte field cannot be encoded behind a u8 length prefix
+        // (256 > u8::MAX). `tls_serialize_to_vec` MUST surface the error; before
+        // the fix it discarded it and returned a silently truncated (empty)
+        // buffer — which, once hashed or signed, is a sign-the-wrong-bytes
+        // hazard for a CA (crypto Finding 1).
+        let overflowing = OverflowComposite {
+            field: vec![0xAB; 256],
+        };
+        let err = overflowing
+            .tls_serialize_to_vec()
+            .expect_err("256-byte u8-prefixed field must fail to encode, not truncate");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+
+        // The boundary value (255 bytes) and any smaller field encode to the
+        // COMPLETE, correct buffer: prefix byte + body.
+        let ok = OverflowComposite {
+            field: vec![0xCD; 255],
+        };
+        let bytes = ok.tls_serialize_to_vec().unwrap();
+        assert_eq!(bytes.len(), 256); // 1-byte prefix + 255-byte body
+        assert_eq!(bytes[0], 0xFF); // length prefix == 255
+        assert!(bytes[1..].iter().all(|&b| b == 0xCD));
+    }
 
     #[test]
     fn serialization_round_trip_with_known_answer_vectors() {
@@ -115,17 +171,32 @@ mod serialization {
         /// Spec §19.2: `parse(serialize(x)) == x` for the integer primitives.
         #[test]
         fn serialization_integer_round_trips(v in any::<u32>()) {
-            prop_assert_eq!(u32::tls_parse_exact(&v.tls_serialize_to_vec()), Ok(v));
+            prop_assert_eq!(u32::tls_parse_exact(&v.tls_serialize_to_vec().unwrap()), Ok(v));
+            // Deliberate narrowing to exercise the u16 codec with the low 16
+            // bits of a random u32: the truncation is the intent of the test,
+            // not a latent hazard, so the lint is silenced locally (qa F1).
             #[allow(clippy::cast_possible_truncation)]
             let narrow = v as u16;
-            prop_assert_eq!(u16::tls_parse_exact(&narrow.tls_serialize_to_vec()), Ok(narrow));
+            prop_assert_eq!(u16::tls_parse_exact(&narrow.tls_serialize_to_vec().unwrap()), Ok(narrow));
         }
 
         /// Round-trip for `uint24` across its full range.
         #[test]
         fn serialization_u24_round_trips(v in 0u32..=0x00FF_FFFF) {
             let u = U24::new(v).unwrap();
-            prop_assert_eq!(U24::tls_parse_exact(&u.tls_serialize_to_vec()), Ok(u));
+            prop_assert_eq!(U24::tls_parse_exact(&u.tls_serialize_to_vec().unwrap()), Ok(u));
+        }
+
+        /// Spec §19.3 "no panic on any input", exercised on a *recursive*
+        /// codec: arbitrary bytes fed to a self-nesting `TlsParse` type reach
+        /// the depth guard and the length-prefixed sub-reader paths that the
+        /// flat-primitive never-panic test cannot (crypto/qa F4). It returns
+        /// `Ok`/`Err`, never panics or overflows the stack.
+        #[test]
+        fn serialization_recursive_type_never_panics(
+            data in prop::collection::vec(any::<u8>(), 0..4096),
+        ) {
+            let _ = Recursive::tls_parse_exact(&data);
         }
 
         /// Round-trip for length-prefixed opaque strings of arbitrary content.

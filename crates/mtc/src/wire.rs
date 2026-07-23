@@ -131,16 +131,20 @@ pub trait TlsSerialize {
     ///
     /// Convenience for the common case of encoding to memory (and the form used
     /// by [`assert_roundtrip!`](crate::assert_roundtrip)).
-    #[must_use]
-    fn tls_serialize_to_vec(&self) -> Vec<u8> {
+    ///
+    /// # Errors
+    ///
+    /// Propagates exactly the errors of [`Self::tls_serialize`]. The `Vec` sink
+    /// itself never performs failing I/O, but the *value* can still fail to
+    /// encode — a variable-length field overflowing its length prefix yields
+    /// [`std::io::ErrorKind::InvalidData`] (writer.rs body-too-long check).
+    /// That error MUST be surfaced: silently returning a truncated buffer here
+    /// would let a structure that failed to encode be hashed or signed, a
+    /// sign-the-wrong-bytes hazard for a CA (crypto review, Finding 1).
+    fn tls_serialize_to_vec(&self) -> io::Result<Vec<u8>> {
         let mut buf = Vec::new();
-        // Writing into a `Vec<u8>` is infallible — its `io::Write` impl never
-        // returns `Err` and cannot exceed a length prefix on its own — so no
-        // error can arise here. We discard the impossible `Result` without
-        // `unwrap`/`expect` (rule no-unwrap-in-prod); a caller that needs a
-        // fallible sink calls `tls_serialize` directly.
-        let _ = self.tls_serialize(&mut buf);
-        buf
+        self.tls_serialize(&mut buf)?;
+        Ok(buf)
     }
 }
 
@@ -242,22 +246,6 @@ impl<const N: usize> TlsParse for [u8; N] {
 /// Serializes `value`, parses the bytes back, and returns both the wire bytes
 /// and the re-parsed value.
 ///
-/// This is the engine behind [`assert_roundtrip!`](crate::assert_roundtrip):
-/// taking `value` by reference pins the codec type from the argument, so it
-/// works uniformly for concrete and generic (`[u8; N]`) implementors where a
-/// bare trait-qualified call could not infer `Self`. Tickets that want the
-/// round-tripped pair without the assertion can call it directly.
-///
-/// # Errors
-///
-/// [`WireError`] if the freshly serialized bytes fail to parse — which, for a
-/// correct codec, indicates a serialize/parse asymmetry bug.
-pub fn roundtrip<T: TlsSerialize + TlsParse>(value: &T) -> Result<(Vec<u8>, T), WireError> {
-    let bytes = value.tls_serialize_to_vec();
-    let parsed = T::tls_parse_exact(&bytes)?;
-    Ok((bytes, parsed))
-}
-
 /// Asserts the round-trip identity `parse(serialize(x)) == x` and returns the
 /// serialized bytes.
 ///
@@ -279,26 +267,45 @@ pub fn roundtrip<T: TlsSerialize + TlsParse>(value: &T) -> Result<(Vec<u8>, T), 
 /// assert_roundtrip!(0x0102_u16, [0x01, 0x02]);
 /// ```
 ///
-/// The macro uses `assert_eq!`/`panic!` (not `unwrap`/`expect`), so it is inert
-/// with respect to the production `unwrap`-ban lint; it is nonetheless a test
-/// helper.
+/// Both a serialization failure (a field overflowing its length prefix) and a
+/// re-parse failure `panic!` with the underlying error — this is a test helper,
+/// and both are bugs a codec test must surface, never swallow. The macro uses
+/// `assert_eq!`/`panic!` (not `unwrap`/`expect`), so it is also inert with
+/// respect to the production `unwrap`-ban lint.
 #[macro_export]
 macro_rules! assert_roundtrip {
     ($value:expr $(,)?) => {{
+        // A local monomorphization helper pins the parse type to `__value`'s
+        // type from the `_hint` argument, sidestepping E0790 for generic impls
+        // such as `[u8; N]` where a bare `TlsParse::tls_parse_exact` call cannot
+        // infer `Self`.
+        fn __parse_like<T: $crate::wire::TlsParse>(
+            _hint: &T,
+            bytes: &[u8],
+        ) -> ::core::result::Result<T, $crate::wire::WireError> {
+            <T as $crate::wire::TlsParse>::tls_parse_exact(bytes)
+        }
+
         let __value = $value;
-        match $crate::wire::roundtrip(&__value) {
-            ::core::result::Result::Ok((__bytes, __parsed)) => {
+        let __bytes = match $crate::wire::TlsSerialize::tls_serialize_to_vec(&__value) {
+            ::core::result::Result::Ok(__b) => __b,
+            ::core::result::Result::Err(__e) => {
+                ::core::panic!("serialization failed (value does not encode): {:?}", __e);
+            }
+        };
+        match __parse_like(&__value, &__bytes) {
+            ::core::result::Result::Ok(__parsed) => {
                 ::core::assert_eq!(
                     __value,
                     __parsed,
                     "round-trip mismatch: parse(serialize(x)) != x",
                 );
-                __bytes
             }
-            ::core::result::Result::Err(__err) => {
-                ::core::panic!("round-trip parse failed on serialized bytes: {:?}", __err);
+            ::core::result::Result::Err(__e) => {
+                ::core::panic!("round-trip parse of serialized bytes failed: {:?}", __e);
             }
         }
+        __bytes
     }};
     ($value:expr, $expected:expr $(,)?) => {{
         let __bytes = $crate::assert_roundtrip!($value);
@@ -334,19 +341,22 @@ mod tests {
     fn primitive_known_answer_vectors() {
         // Encodings are fixed by the presentation language (RFC 8446 §3):
         // big-endian, no padding.
-        assert_eq!(0x12u8.tls_serialize_to_vec(), vec![0x12]);
-        assert_eq!(0x0102u16.tls_serialize_to_vec(), vec![0x01, 0x02]);
+        assert_eq!(0x12u8.tls_serialize_to_vec().unwrap(), vec![0x12]);
+        assert_eq!(0x0102u16.tls_serialize_to_vec().unwrap(), vec![0x01, 0x02]);
         assert_eq!(
-            U24::new(0x0001_0203).unwrap().tls_serialize_to_vec(),
+            U24::new(0x0001_0203)
+                .unwrap()
+                .tls_serialize_to_vec()
+                .unwrap(),
             vec![0x01, 0x02, 0x03],
         );
         assert_eq!(
-            0x0102_0304u32.tls_serialize_to_vec(),
+            0x0102_0304u32.tls_serialize_to_vec().unwrap(),
             vec![0x01, 0x02, 0x03, 0x04],
         );
         // Fixed-size opaque has no length prefix.
         assert_eq!(
-            [0xAAu8, 0xBB, 0xCC].tls_serialize_to_vec(),
+            [0xAAu8, 0xBB, 0xCC].tls_serialize_to_vec().unwrap(),
             vec![0xAA, 0xBB, 0xCC]
         );
     }
@@ -354,24 +364,36 @@ mod tests {
     #[test]
     fn primitive_round_trips() {
         for v in [0u8, 1, 0x7F, 0x80, 0xFF] {
-            assert_eq!(u8::tls_parse_exact(&v.tls_serialize_to_vec()), Ok(v));
+            assert_eq!(
+                u8::tls_parse_exact(&v.tls_serialize_to_vec().unwrap()),
+                Ok(v)
+            );
         }
         for v in [0u16, 1, 0x00FF, 0x0100, 0xFFFF] {
-            assert_eq!(u16::tls_parse_exact(&v.tls_serialize_to_vec()), Ok(v));
+            assert_eq!(
+                u16::tls_parse_exact(&v.tls_serialize_to_vec().unwrap()),
+                Ok(v)
+            );
         }
         for v in [0u32, 1, 0x00FF_FFFF, 0x0100_0000, u32::MAX] {
-            assert_eq!(u32::tls_parse_exact(&v.tls_serialize_to_vec()), Ok(v));
+            assert_eq!(
+                u32::tls_parse_exact(&v.tls_serialize_to_vec().unwrap()),
+                Ok(v)
+            );
         }
         for raw in [0u32, 1, 0x00FF_FFFF, 0x0012_3456] {
             let v = U24::new(raw).unwrap();
-            assert_eq!(U24::tls_parse_exact(&v.tls_serialize_to_vec()), Ok(v));
+            assert_eq!(
+                U24::tls_parse_exact(&v.tls_serialize_to_vec().unwrap()),
+                Ok(v)
+            );
         }
     }
 
     #[test]
     fn fixed_opaque_round_trips_and_rejects_short_input() {
         let value = [0x01u8, 0x02, 0x03, 0x04];
-        let bytes = value.tls_serialize_to_vec();
+        let bytes = value.tls_serialize_to_vec().unwrap();
         assert_eq!(<[u8; 4]>::tls_parse_exact(&bytes), Ok(value));
         // One byte short: EOF, not a panic.
         assert!(matches!(

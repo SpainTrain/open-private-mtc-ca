@@ -489,6 +489,21 @@ mod tests {
         );
     }
 
+    #[test]
+    fn deeply_nested_beyond_default_budget_is_rejected() {
+        // ~64 levels of nesting exceeds DEFAULT_MAX_DEPTH (32). The *default*
+        // reader (via tls_parse_exact) must reject with DepthLimitExceeded
+        // rather than recursing into a stack overflow — the guard has to hold at
+        // the depth real callers get, not only at a hand-lowered max_depth=2.
+        let bytes = nested_bytes(64);
+        match Nest::tls_parse_exact(&bytes) {
+            Err(WireError::DepthLimitExceeded { limit, .. }) => {
+                assert_eq!(limit, TlsReader::DEFAULT_MAX_DEPTH);
+            }
+            other => panic!("expected DepthLimitExceeded at the default budget, got {other:?}"),
+        }
+    }
+
     // A codec that deliberately consumes zero bytes, to prove the vector loop
     // cannot be driven into a non-terminating spin.
     #[derive(Debug, PartialEq)]
