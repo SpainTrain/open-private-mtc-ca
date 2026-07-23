@@ -32,6 +32,8 @@
 
 pub mod error;
 pub mod types;
+pub mod wire;
 
 pub use error::{HashOutputError, IdError};
 pub use types::{BatchId, BatchTag, Epoch, HashOutput, Id, Index, LogId, LogTag, TreeSize};
+pub use wire::{TlsParse, TlsReader, TlsSerialize, WireError, U24};
