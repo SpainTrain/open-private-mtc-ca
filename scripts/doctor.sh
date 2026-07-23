@@ -35,7 +35,6 @@ RESET_COLOR='\033[0m'
 
 # Track overall status.
 any_hard_failed=false
-any_soft_failed=false
 
 # Helper to print a check result.
 # Args: status (PASS, FAIL, WARN), message, [fix_command]
@@ -64,8 +63,8 @@ report_check() {
   esac
 }
 
-printf '\n%sDev Environment Diagnostics%s\n' "$PASS_COLOR" "$RESET_COLOR"
-printf '%s=================================\n' "$PASS_COLOR" && printf '%s\n' "$RESET_COLOR"
+printf '\n%bDev Environment Diagnostics%b\n' "$PASS_COLOR" "$RESET_COLOR"
+printf '%b=================================\n%b' "$PASS_COLOR" "$RESET_COLOR"
 
 # Check 1: Docker daemon reachable.
 if command -v docker > /dev/null 2>&1 && docker ps > /dev/null 2>&1; then
@@ -178,13 +177,13 @@ if command -v df > /dev/null 2>&1; then
   fi
 fi
 
-printf '\n%s=================================\n' "$PASS_COLOR" && printf '%s\n' "$RESET_COLOR"
+printf '\n%b=================================\n%b' "$PASS_COLOR" "$RESET_COLOR"
 
 # Summary.
 if [ "$any_hard_failed" = true ]; then
-  printf '%bSummary: Some checks failed. Fix the items above, then re-run.%s\n\n' "$FAIL_COLOR" "$RESET_COLOR"
+  printf '%bSummary: Some checks failed. Fix the items above, then re-run.%b\n\n' "$FAIL_COLOR" "$RESET_COLOR"
   exit 1
 else
-  printf '%bSummary: All hard checks passed. You are ready to run `make demo`.%s\n\n' "$PASS_COLOR" "$RESET_COLOR"
+  printf '%bSummary: All hard checks passed. You are ready to run `make demo`.%b\n\n' "$PASS_COLOR" "$RESET_COLOR"
   exit 0
 fi
