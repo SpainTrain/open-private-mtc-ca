@@ -17,13 +17,14 @@ failed=0
 echo "Testing doctor diagnostics..."
 
 # Test 1: doctor exits 0 when only warnings/passes
-output=$(scripts/doctor.sh 2>&1 || true)
-if [ $? -eq 0 ]; then
+output=$(scripts/doctor.sh 2>&1)
+rc=$?
+if [ "$rc" -eq 0 ]; then
   echo "PASS: doctor exits 0 when checks pass or warn"
   ((passed++))
 else
   # It's okay if it exits non-zero if there's a hard failure
-  echo "INFO: doctor exited with status (hard checks may have failed)"
+  echo "INFO: doctor exited with status $rc (hard checks may have failed)"
 fi
 
 # Test 2: doctor output should not contain raw escape sequences (\033)

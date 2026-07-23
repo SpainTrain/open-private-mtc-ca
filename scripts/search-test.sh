@@ -13,7 +13,7 @@ cd "$repo_root"
 
 # If rg is not in PATH, try adding common locations.
 if ! command -v rg > /dev/null 2>&1; then
-  for rg_dir in ~/.gemini/tmp/bin /usr/local/bin ~/.cargo/bin; do
+  for rg_dir in /usr/local/bin ~/.cargo/bin; do
     if [ -x "$rg_dir/rg" ]; then
       export PATH="$rg_dir:$PATH"
       break
@@ -91,11 +91,13 @@ else
 fi
 
 # Test 6: find-impl with non-existent trait should exit cleanly (not fail)
-if iface=NonExistent12345 scripts/find-impl.sh > /dev/null 2>&1 || true; then
+iface=NonExistent12345 scripts/find-impl.sh > /dev/null 2>&1
+rc=$?
+if [ "$rc" -eq 0 ]; then
   echo "PASS: find-impl with non-existent trait exits cleanly"
   ((passed++))
 else
-  echo "FAIL: find-impl with non-existent trait did not exit cleanly"
+  echo "FAIL: find-impl with non-existent trait did not exit cleanly (rc=$rc)"
   ((failed++))
 fi
 
