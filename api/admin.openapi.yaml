@@ -1,0 +1,214 @@
+# MTC-CA admin API (spec §17.2). This file is the single source of truth for
+# the admin surface: server stubs, the Rust client, and (in a later ticket) the
+# TypeScript client and HTML docs are all generated from it.
+#
+# Workflow (spec §17.5): edit this file, then run `make api-gen` (delegates to
+# scripts/api-gen.sh) to lint the spec and regenerate
+# crates/admin-api-server and crates/admin-api-client.
+openapi: 3.0.3
+info:
+  title: MTC-CA Admin API
+  description: |
+    Administrative HTTP+JSON API for the Merkle Tree Certificate CA
+    (spec §17.2). Consumed by `mtcctl` (via the generated Rust client) and the
+    admin UI. Seed surface: health endpoints (§20.5) and a minimal service
+    status endpoint (§17.3).
+  version: 0.1.0
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+servers:
+  - url: http://localhost:8080
+    description: Local dev instance (`make demo`, spec §18.1)
+tags:
+  - name: health
+    description: Liveness and readiness probes (spec §20.5)
+  - name: status
+    description: Service status for operators and `mtcctl status` (spec §17.3)
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      operationId: getHealthz
+      summary: Liveness probe
+      description: >
+        Returns 200 when the process is alive (spec §20.5). Carries no
+        dependency checks; use /readyz for those.
+      responses:
+        "200":
+          description: Process is alive.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthzResponse"
+  /readyz:
+    get:
+      tags: [health]
+      operationId: getReadyz
+      summary: Readiness probe
+      description: >
+        Returns 200 when the service is ready to serve traffic; 503 with the
+        same body shape when one or more dependency checks fail (spec §20.5).
+      responses:
+        "200":
+          description: Service is ready to serve.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyzResponse"
+        "503":
+          description: Service is not ready; body lists the failing checks.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyzResponse"
+  /status:
+    get:
+      tags: [status]
+      operationId: getStatus
+      summary: Service status
+      description: >
+        Minimal service status (spec §17.3): identity/build info plus the
+        current lease and latest checkpoint when known. Backs `mtcctl status`
+        and the admin UI dashboard.
+      responses:
+        "200":
+          description: Current service status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        default:
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+components:
+  schemas:
+    HealthzResponse:
+      type: object
+      description: Liveness probe response (spec §20.5).
+      required: [status]
+      properties:
+        status:
+          type: string
+          description: Always `ok` when the process can respond at all.
+          enum: [ok]
+          example: ok
+    ReadyzResponse:
+      type: object
+      description: Readiness probe response (spec §20.5).
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          description: Aggregate readiness of the service.
+          enum: [ready, not_ready]
+          example: ready
+        checks:
+          type: array
+          description: Individual dependency checks backing the aggregate.
+          items:
+            $ref: "#/components/schemas/ReadinessCheck"
+    ReadinessCheck:
+      type: object
+      description: One dependency check contributing to readiness.
+      required: [name, ok]
+      properties:
+        name:
+          type: string
+          description: Check identifier (e.g. `storage`, `hsm`).
+          example: storage
+        ok:
+          type: boolean
+          description: Whether this check passed.
+          example: true
+        detail:
+          type: string
+          description: Human-readable failure detail; omitted when `ok`.
+          example: "DynamoDB endpoint unreachable"
+    StatusResponse:
+      type: object
+      description: Minimal service status (spec §17.3).
+      required: [service]
+      properties:
+        service:
+          $ref: "#/components/schemas/ServiceInfo"
+        lease:
+          $ref: "#/components/schemas/LeaseStatus"
+        checkpoint:
+          $ref: "#/components/schemas/CheckpointStatus"
+    ServiceInfo:
+      type: object
+      description: Identity and build information for the responding instance.
+      required: [name, version, region]
+      properties:
+        name:
+          type: string
+          description: Service name.
+          example: mtc-ca
+        version:
+          type: string
+          description: Semantic version of the running build.
+          example: 0.1.0
+        region:
+          type: string
+          description: Cloud region (or simulated region) of this instance.
+          example: us-east-1
+        started_at:
+          type: string
+          format: date-time
+          description: Instance start time (RFC 3339).
+          example: "2026-07-21T12:00:00Z"
+    LeaseStatus:
+      type: object
+      description: Current write-lease state (spec §8, §17.3).
+      required: [holder, epoch, expires_at]
+      properties:
+        holder:
+          type: string
+          description: Region currently holding the write lease.
+          example: us-east-1
+        epoch:
+          type: integer
+          format: int64
+          description: Current lease epoch.
+          example: 42
+        expires_at:
+          type: string
+          format: date-time
+          description: Lease expiry time (RFC 3339).
+          example: "2026-07-21T12:05:00Z"
+    CheckpointStatus:
+      type: object
+      description: Latest signed checkpoint summary (spec §8, §17.3).
+      required: [tree_size, root_hash, timestamp]
+      properties:
+        tree_size:
+          type: integer
+          format: int64
+          description: Number of leaves in the log at this checkpoint.
+          example: 1048576
+        root_hash:
+          type: string
+          description: Hex-encoded Merkle tree root hash.
+          example: "9f2c1d8a3b4e5f60718293a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4"
+        timestamp:
+          type: string
+          format: date-time
+          description: Checkpoint signing time (RFC 3339).
+          example: "2026-07-21T12:00:00Z"
+    ErrorResponse:
+      type: object
+      description: Standard error envelope for non-2xx responses.
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Stable machine-readable error code.
+          example: internal_error
+        message:
+          type: string
+          description: Human-readable error description.
+          example: "unexpected internal error"

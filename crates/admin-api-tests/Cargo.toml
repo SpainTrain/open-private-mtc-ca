@@ -1,0 +1,22 @@
+# Hand-written contract tests for the generated admin API crates (spec §17.2).
+# Deliberately a separate crate: `make api-gen` fully rewrites the two
+# generated crates (admin-api-server, admin-api-client), so tests must live
+# outside them to survive regeneration.
+[package]
+name = "mtc-admin-api-tests"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dev-dependencies]
+mtc-admin-api-client = { path = "../admin-api-client" }
+mtc-admin-api-server = { path = "../admin-api-server" }
+pretty_assertions.workspace = true
+# Pinned in-crate: not yet part of the workspace dependency baseline.
+serde_json = "1"
+
+[lints]
+workspace = true
