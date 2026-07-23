@@ -1,0 +1,7 @@
+[package]
+name = "fixture-leaf"
+version = "0.1.0"
+edition = "2021"
+description = "Fixture crate with no public items and no dependencies"
+
+[dependencies]

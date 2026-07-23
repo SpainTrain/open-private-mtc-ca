@@ -1,0 +1,6 @@
+# Fixture workspace for scripts/codemap-smoke-test.sh. Not a real crate —
+# copied to a throwaway sandbox before `cargo metadata` ever touches it, so
+# it never grows a Cargo.lock or target/ of its own.
+[workspace]
+resolver = "2"
+members = ["crates/*"]
