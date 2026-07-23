@@ -1,0 +1,25 @@
+# clippy.toml — workspace-wide clippy behavior knobs (spec §22.12).
+#
+# Lint *levels* (pedantic/nursery/cargo groups, unwrap/expect denies,
+# missing_docs, unsafe_code) live in the root Cargo.toml [workspace.lints.*]
+# tables and are inherited by member crates via `[lints] workspace = true`.
+# This file only tunes how individual lints behave. The deviation policy is
+# documented in docs/lint-policy.md.
+
+# The documented test-exemption pattern for the unwrap/expect bans:
+# `clippy::unwrap_used` / `clippy::expect_used` do not fire inside `#[test]`
+# functions or `#[cfg(test)]` modules, so tests unwrap freely while production
+# code cannot. (Non-`#[test]` helpers in integration-test files still need a
+# scoped `#[allow]` — see docs/lint-policy.md.)
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+
+# Note: `cargo-ignore-publish` is deliberately left at its default (false).
+# Despite the name, `true` would force `clippy::cargo_common_metadata` to lint
+# even `publish = false` crates; the default already skips them, which is what
+# we want for internal, never-published crates (e.g. the workspace placeholder).
+
+# Apply pedantic/nursery fixes even when they would change exported
+# signatures. Pre-1.0 workspace: we want the strictest form of these lints
+# now, not after the public API ossifies.
+avoid-breaking-exported-api = false
