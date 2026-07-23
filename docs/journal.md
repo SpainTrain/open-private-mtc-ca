@@ -84,3 +84,18 @@ Decisions:
 
 Open questions:
 - (none)
+
+## 2026-07-23 — memory-backend: implemented crates/cloud-memory (all four cloud-types traits)
+
+**Ticket**: mtc-sxy
+**PR**: —
+
+Decisions:
+- MemoryObjectStore and the MemoryObjectLock alias are the *same* struct sharing one Arc<Mutex<BTreeMap>>: a client-side emulation of S3 Object Lock must share the object namespace with the store it locks, so ObjectStore::delete/put(Overwrite) can see retention set via ObjectLock::put_with_retention. Two independent structs would have let the two traits disagree about what is retained.
+- atomic_update requires the item to already exist (NotFound if absent) rather than upserting an empty Map — the trait doc is ambiguous here; chose the stricter reading since real usage (epoch/counter items) always bootstraps via put first. transact's Update op instead maps a missing item to ConditionFailed, since transact's documented error surface has no NotFound variant. Both choices are implementation details the cloud-test-suite-kv ticket should validate/pin down.
+- transact is two-pass (validate every op's conditions + compute planned writes against the pre-transaction snapshot, then apply) under one Mutex hold, guaranteeing all-or-nothing without any CAS/rollback machinery.
+- MemoryHsm: RustCrypto p256 0.13 + getrandom 0.3 (pinned to match crates/acme-core's existing versions rather than p256 0.14, keeping the workspace's duplicate-version footprint down). Signature encoding is the required 64-byte P1363 r||s. Key zeroization relies on p256::ecdsa::SigningKey's built-in ZeroizeOnDrop (elliptic-curve's default "zeroize" feature) rather than a hand-rolled Drop/zeroize wrapper; pinned by a compile-time assert_zeroize_on_drop::<SigningKey>() test (zeroize crate added as a dev-dependency only, to name the trait).
+- std::sync::Mutex (not tokio::sync::Mutex or parking_lot) for all interior state: guards are never held across an .await, and poisoning is recovered via unwrap_or_else(PoisonError::into_inner) rather than unwrap() (no-unwrap-in-prod).
+
+Open questions:
+- Discovered pre-existing, unrelated bug: crates/clock/src/fake.rs:161 (the non-tokio-feature notify_waiters stub) fails clippy::unused_self + clippy::missing_const_for_fn under the default (no --all-features) feature set — exactly what make agent-precheck/make verify-task run, so both currently FAIL on a clean checkout before this ticket's changes. Confirmed pre-existing (reproduced on an untouched crates/clock, unrelated to cloud-memory) and left unfixed here per single-pr-acceptance/smallest-change scope; needs its own bead (likely impl-clock-crate territory).
