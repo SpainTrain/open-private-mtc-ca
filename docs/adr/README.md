@@ -58,5 +58,6 @@ adds a row to the index below. Then:
 | ADR | Title | Status | Summary |
 |-----|-------|--------|---------|
 | [ADR-0001](0001-adopt-architecture-decision-records.md) | Adopt architecture decision records | Accepted | Preserve non-trivial decisions as MADR-style ADRs in docs/adr/ with a grep-able index and `make adr` scaffolding (spec §23.5–23.6). |
+| [ADR-0002](0002-use-step-functions-for-the-pruning-workflow-oq-7.md) | Use Step Functions for the pruning workflow (OQ-7) | Accepted | Orchestrate pruning (§15.2) with a Step Functions Standard state machine over thin Lambda steps, not a Lambda chain; spike proves it runs on the pinned LocalStack community image (§1 zero-cost). |
 <!-- adr-index-end -->
 <!-- markdownlint-enable MD060 -->
