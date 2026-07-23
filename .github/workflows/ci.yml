@@ -1,0 +1,89 @@
+# CI pipeline: core required Rust checks (spec §22.13).
+#
+# This workflow implements only the ci-pipeline ticket subset: fmt, clippy,
+# test, doctest. Sibling tickets add the remaining §22.13 checks as separate
+# jobs/workflows: cargo-deny + cargo-audit (fnd-license-policy), the API spec
+# check (fnd-ci-api-spec-check), the Kani gate (fnd-ci-kani-gate), the infra/
+# TypeScript lane (fnd-ci-infra-checks), and the LocalStack integration lane
+# (fnd-ci-integration-lane).
+#
+# One job per required check, so each surfaces as its own status check for
+# branch protection. The required-checks list is documented in docs/ci.md —
+# update that doc when adding or renaming jobs here.
+#
+# Action pinning: every third-party action is pinned to an exact commit SHA
+# (supply-chain hygiene), with the corresponding release tag in a trailing
+# comment. Bump by editing the SHA and the comment together.
+#
+# Toolchain: rustup on the runner reads rust-toolchain.toml and installs the
+# pinned toolchain (with rustfmt + clippy components), so CI compiles with
+# exactly the same compiler as local dev.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# One concurrency group per workflow+ref: pushing a new commit to a PR or
+# branch cancels the superseded in-flight run. Runs on main are never
+# cancelled, so every mainline commit keeps a complete verdict.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    name: fmt
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+      # No build cache: rustfmt only parses source, it compiles nothing.
+      - name: cargo fmt --check
+        run: cargo fmt --all --check
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - name: cargo clippy (deny warnings)
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - name: cargo test (all features)
+        run: cargo test --workspace --all-features
+
+  doctest:
+    name: doctest
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - name: cargo test --doc
+        run: cargo test --workspace --doc
