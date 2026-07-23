@@ -1,0 +1,42 @@
+{
+  "name": "mtc-infra",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AWS CDK app for the MTC CA (synth-only; no real AWS account is ever targeted)",
+  "bin": {
+    "mtc-infra": "bin/mtc-infra.js"
+  },
+  "engines": {
+    "node": "22.13.0"
+  },
+  "volta": {
+    "node": "22.13.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "test": "jest",
+    "lint": "eslint .",
+    "fmt": "prettier --write .",
+    "fmt:check": "prettier --check .",
+    "synth": "cdk synth"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/jest": "30.0.0",
+    "@types/node": "26.1.1",
+    "aws-cdk": "2.1132.1",
+    "eslint": "10.7.0",
+    "eslint-config-prettier": "10.1.8",
+    "jest": "30.4.2",
+    "prettier": "3.9.6",
+    "ts-jest": "29.4.12",
+    "ts-node": "10.9.2",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.65.0"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "2.262.0",
+    "constructs": "10.7.1"
+  }
+}
