@@ -339,6 +339,51 @@ mod tests {
     }
 
     #[test]
+    fn verify_rejects_malformed_spki_key() {
+        // A junk SPKI DER blob decodes to no key at all: `verify` reports
+        // `MalformedKey` before any curve math, never a panic (crypto-review
+        // finding 3). Regression guard against a future `p256`/`spki` upgrade
+        // changing the decode-failure path.
+        let scheme = EcdsaP256;
+        let junk = VerifyingKey::from_spki_der(ALGORITHM, vec![0xde, 0xad, 0xbe, 0xef, 0x00]);
+        let signature = Signature::from_bytes(vec![1u8; P1363_LEN]);
+        assert_eq!(
+            scheme.verify(&junk, b"message", &signature),
+            Err(VerifyError::MalformedKey),
+        );
+    }
+
+    #[test]
+    fn verify_rejects_out_of_range_scalars() {
+        // r = n or s = n: the group order is not a valid scalar (valid range is
+        // [1, n)). The `ecdsa` crate rejects it at signature decode; pin that as
+        // `MalformedSignature` so a future upgrade cannot silently start
+        // reducing an out-of-range value mod n into an accepted form
+        // (crypto-review finding 5).
+        let scheme = EcdsaP256;
+        let (_signing, verifying) = EcdsaP256::generate_keypair();
+        let n = hexdec("FFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551");
+        let mut one = vec![0u8; SCALAR_LEN];
+        one[SCALAR_LEN - 1] = 1;
+
+        // r = n, s = 1.
+        let mut r_is_n = n.clone();
+        r_is_n.extend_from_slice(&one);
+        assert_eq!(
+            scheme.verify(&verifying, b"m", &Signature::from_bytes(r_is_n)),
+            Err(VerifyError::MalformedSignature),
+        );
+
+        // r = 1, s = n.
+        let mut s_is_n = one.clone();
+        s_is_n.extend_from_slice(&n);
+        assert_eq!(
+            scheme.verify(&verifying, b"m", &Signature::from_bytes(s_is_n)),
+            Err(VerifyError::MalformedSignature),
+        );
+    }
+
+    #[test]
     fn signing_key_from_bytes_rejects_degenerate_scalars() {
         // `.unwrap_err()` throughout: `SigningKey` deliberately does not
         // implement `PartialEq` (secret-key equality is a side-channel
