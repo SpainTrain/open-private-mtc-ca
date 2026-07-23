@@ -1,34 +1,48 @@
-# Rule: document-decisions
+# document-decisions
 
-Non-trivial decisions go in `docs/adr/` (spec §23.2, §23.5).
+> Spec: §23.5 (Outer-loop tooling: ADRs and decision journal).
+
+## Rule
+
+Non-trivial decisions go in `docs/adr/`. Smaller, task-scoped decisions are
+recorded in the decision journal (`docs/journal.md`, via `make journal
+msg="..."`).
 
 ## Rationale
 
-Agents' context windows do not span project history. A decision that lives
-only in a PR description or chat transcript will be re-litigated — or
-silently reversed — by a later agent. ADRs in [`docs/adr/`](../../docs/adr/)
-are the standalone, grep-able record (§23.5–23.6): check the index at
-[`docs/adr/README.md`](../../docs/adr/README.md) before deciding, and record
-new non-trivial decisions with `make adr title="..."` (template:
-[`docs/adr/_template.md`](../../docs/adr/_template.md)). Chronological
-narrative belongs in `docs/journal.md`; durable decisions belong in ADRs.
+§23.5: ADRs in `docs/adr/` preserve decisions worth keeping as standalone
+artifacts; the decision journal gives future agents the context of what was
+decided and why. Agents (and humans) working across tasks cannot re-derive
+intent from code alone — an undocumented decision gets silently re-litigated,
+and the ADR index exists precisely so agents can `grep` decisions before
+re-deciding (§23.6). Scaffold with `make adr title="..."` (template:
+`docs/adr/_template.md`) and check the index `docs/adr/README.md` first. This is the outer loop that keeps a long-running,
+multi-session project coherent.
 
 ## Compliant example
 
-Choosing a lock-free queue over a mutex on the write path: grep
-`docs/adr/README.md` for prior art, then `make adr title="Lock-free queue
-for write-path batching"`, fill in context/decision/alternatives/
-consequences with spec citations, mark it Accepted, and update the index
-row's summary — all in the same PR as the code.
+```text
+PR: "Use DDB ConditionExpression for epoch-checked counter updates"
+- docs/adr/0009-epoch-conditional-writes.md
+  Context / Decision / Alternatives considered (optimistic locking — rejected:
+  violates single-writer guarantees) / Consequences
+- journal entry appended via: make journal msg="STORAGE-3: chose
+  ConditionExpression over optimistic locking; see ADR-0009"
+```
 
 ## Non-compliant example
 
-Explaining the same choice only in the PR description ("went with crossbeam
-because benchmarks"), leaving no ADR — the next agent touching the write
-path has no discoverable record and re-decides.
+```text
+PR: "Rework lease renewal timing"
+- Changes the renewal interval and jitter strategy — a correctness-relevant
+  protocol decision — with no ADR and no journal entry; rationale exists only
+  in the PR comment thread.
+```
 
 ## Enforcement
 
-Review: PRs containing non-trivial design choices must reference an ADR (new
-or existing). `make adr` keeps numbering and the index mechanical; a CI
-freshness check on the index is owned by foundation-infra.
+- **Review**: PRs embodying a non-trivial decision (protocol, dependency,
+  boundary, format) without an ADR or journal entry are sent back.
+- **Tooling**: closing a Beads ticket auto-appends a journal entry (§23.5);
+  `make agent-precheck` reads recent decisions so undocumented ones are
+  invisible to the next task (§23.4).
