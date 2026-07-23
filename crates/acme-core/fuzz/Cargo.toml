@@ -1,0 +1,33 @@
+# cargo-fuzz package for acme-core (spec §19.3, layer 2: unstructured
+# fuzzing). Its own workspace root on purpose: fuzz targets need nightly +
+# libfuzzer and must not join the main workspace build.
+#
+# Run (requires nightly + cargo-fuzz):
+#   cd crates/acme-core/fuzz
+#   cargo +nightly fuzz run fuzz_jws_parse
+#
+# Corpus lives in corpus/fuzz_jws_parse/ (checked in per §19.3); minimized
+# bug-finding inputs graduate to unit-test fixtures.
+[package]
+name = "acme-core-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1"
+acme-core = { path = ".." }
+
+[[bin]]
+name = "fuzz_jws_parse"
+path = "fuzz_targets/fuzz_jws_parse.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]
