@@ -76,6 +76,16 @@ Each entry states what is relaxed, where, and why.
    `cargo fmt --check` enforces, so `imports_granularity`, `group_imports`,
    `wrap_comments`, etc. stay out until stabilized.
 
+## Known gotchas
+
+- **`clippy::duration_suboptimal_units` vs unstable constructors** — this
+  nursery lint wants `Duration::from_days(400)`, but on the pinned stable
+  toolchain `from_days`/`from_weeks` are still unstable (`duration_constructors`,
+  E0658); only `from_mins`/`from_hours` (`duration_constructors_lite`) are
+  stable. Spell day-scale durations as `Duration::from_hours(400 * 24)` —
+  do not silence the lint and do not enable unstable features. (First hit in
+  `crates/clock` test code.)
+
 ## The `unsafe_code` exception policy (PKCS#11 FFI)
 
 `unsafe_code = "forbid"` cannot be overridden by an inner `#[allow]` — that is
