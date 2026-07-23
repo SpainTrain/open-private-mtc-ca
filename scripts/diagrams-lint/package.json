@@ -1,0 +1,10 @@
+{
+  "name": "diagrams-lint",
+  "private": true,
+  "description": "Mermaid syntax checker for docs/architecture (make diagrams-check). Parses fenced mermaid blocks headlessly; no browser required.",
+  "type": "module",
+  "dependencies": {
+    "jsdom": "29.1.1",
+    "mermaid": "11.16.0"
+  }
+}
