@@ -11,12 +11,26 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/../.." && pwd)"
 cd "${repo_root}"
 
-# Spec §18.8 targets plus the lifecycle companions. These are all stubs today.
+# Spec §18.8 targets plus the lifecycle companions (and the §23.4 inner-loop
+# targets watch / working-set). All must be listed by `make help`.
 required_targets=(
   demo demo-down demo-multiregion demo-multiregion-down dev
   test test-unit test-prop test-conformance test-chaos test-soak test-e2e
   repl fixture-load fixture-save time-advance partition-region
   api-gen codemap agent-context agent-precheck verify-task journal
+  fmt lint audit bench doctor watch working-set
+)
+
+# The subset still stubbed with $(call not_implemented,...) — these must exit
+# non-zero. Implemented targets graduate out of this list: agent-precheck,
+# verify-task, watch, and working-set are real (ticket agent-inner-loop-targets;
+# covered by scripts/agent-inner-loop-test.sh), as is journal (mk/journal.mk;
+# covered by scripts/journal-append-test.sh).
+stub_targets=(
+  demo demo-down demo-multiregion demo-multiregion-down dev
+  test test-unit test-prop test-conformance test-chaos test-soak test-e2e
+  repl fixture-load fixture-save time-advance partition-region
+  api-gen codemap agent-context
   fmt lint audit bench doctor
 )
 
@@ -36,7 +50,7 @@ for t in "${required_targets[@]}"; do
 done
 
 echo "== stub targets exit non-zero =="
-for t in "${required_targets[@]}"; do
+for t in "${stub_targets[@]}"; do
   if make "${t}" >/dev/null 2>&1; then
     printf '  UNEXPECTED-EXIT-0  %s\n' "${t}"
     fail=1

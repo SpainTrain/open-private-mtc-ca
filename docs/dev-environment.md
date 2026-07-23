@@ -93,8 +93,10 @@ grouped into the `mk/` fragment that hosts them.
 | `api-gen` | `mk/api.mk` | Regenerate API code from OpenAPI | openapi-codegen-pipeline |
 | `codemap` | `mk/agent.mk` | Generate the repo code map | agent-harnessing epic (§23.6) |
 | `agent-context` | `mk/agent.mk` | Generate an agent context summary | agent-harnessing epic (§23) |
-| `agent-precheck` | `mk/agent.mk` | Pre-task verification | agent-harnessing epic (§23) |
-| `verify-task` | `mk/agent.mk` | Post-task verification | agent-harnessing epic (§23) |
+| `agent-precheck` | `mk/agent.mk` | Pre-task verification | agent-inner-loop-targets (implemented) |
+| `verify-task` | `mk/agent.mk` | Post-task verification | agent-inner-loop-targets (implemented) |
+| `watch` | `mk/agent.mk` | Lint+test on every save (bacon / cargo-watch) | agent-inner-loop-targets (implemented) |
+| `working-set` | `mk/agent.mk` | Start `./WORKING_SET.md` from the template | agent-inner-loop-targets (implemented) |
 | `journal` | `mk/agent.mk` | Append to the decision journal (`msg="..."`) | agent-harnessing epic (§23.7) |
 | `fmt` | `mk/quality.mk` | Format all code | fnd-rust-lint-config |
 | `lint` | `mk/quality.mk` | Run all linters | fnd-rust-lint-config |
@@ -103,5 +105,42 @@ grouped into the `mk/` fragment that hosts them.
 | `doctor` | `mk/doctor.mk` | Diagnose the dev environment | dev-doctor |
 
 The E2E smoke test `tests/e2e/make-targets.sh` keeps this skeleton honest: it
-asserts `make help` lists every spec §18.8 target and that each stub exits
-non-zero.
+asserts `make help` lists every spec §18.8 target and that each remaining stub
+exits non-zero.
+
+## Inner-loop tooling (spec §23.4)
+
+Every agent (or human) task runs inside the same fast feedback loop, entirely
+offline on a laptop:
+
+1. **`make agent-precheck`** — run first, before editing anything
+   (`.claude/rules/run-precheck-first.md`). Verifies required tools (Rust
+   toolchain, docker, beads CLI), prints the most recent `docs/journal.md`
+   entries so recent decisions are read before code is written, then lints the
+   workspace (`cargo fmt --check`, `clippy -D warnings`) and runs the fast
+   unit tests. Any failure exits non-zero: fix the baseline (or understand it)
+   before starting. Targets ~60s on a warm laptop.
+2. **`make watch`** — keep running while you work. Runs lint+test on every
+   save via `bacon` (preferred; repo config in `bacon.toml`) or `cargo-watch`.
+   If neither is installed it prints the `cargo install` hints and exits;
+   `make doctor` owns full diagnostics.
+3. **`make verify-task`** — the pre-done acceptance gate. Runs workspace lint,
+   the fast test suite (`cargo test --workspace`), and the doc/skill/rules
+   lints (`rules-lint`, `skill-lint`, `lint-runbooks`,
+   `lint-security-checklist`). A task is not done until it passes.
+
+### `WORKING_SET.md` convention
+
+While a task is in flight, its scratch state lives in `WORKING_SET.md` at the
+repo root: the files touched (and why), decisions made (with rejected
+alternatives), and open questions. Start one from the checked-in template with
+`make working-set` (never overwrites an existing copy), keep it current as you
+work, and use it at close-out as the checklist for the journal entry
+(`make journal msg="..."`) and for filing beads tickets for open questions.
+
+Working copies are task-scoped and **never committed** — `/WORKING_SET.md` is
+gitignored. The template itself is versioned at `docs/templates/WORKING_SET.md`.
+
+`make agent-inner-loop-test` smoke-tests all of the above (script logic,
+failure modes, and both gates passing on the current tree; shellcheck when
+installed).

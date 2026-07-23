@@ -1,0 +1,16 @@
+# bacon.toml — repo config for `make watch` (spec §23.4: lint+test on save).
+#
+# The default job runs the same lint+test pair as the verify-task gate: clippy
+# over the whole workspace with -D warnings, then the fast tests. bacon's
+# built-in jobs (check, clippy, test, doc, ...) remain available via their
+# usual keybindings.
+
+default_job = "lint-test"
+
+[jobs.lint-test]
+command = [
+    "bash",
+    "-c",
+    "cargo clippy --workspace --all-targets --color always -- -D warnings && cargo test --workspace --quiet --color always",
+]
+need_stdout = true
