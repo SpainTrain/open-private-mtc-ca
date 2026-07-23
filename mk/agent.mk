@@ -1,7 +1,7 @@
 # Agent-harnessing targets (spec §23). Stubs today; implemented by the
 # agent-harnessing epic.
 
-.PHONY: codemap agent-context agent-precheck verify-task journal
+.PHONY: codemap agent-context agent-precheck verify-task
 
 codemap: ## Generate the repo code map
 	$(call not_implemented,agent-harnessing epic (spec §23.6))
@@ -14,6 +14,3 @@ agent-precheck: ## Run pre-task verification
 
 verify-task: ## Run post-task verification
 	$(call not_implemented,agent-harnessing epic (spec §23))
-
-journal: ## Append to the decision journal (msg="...")
-	$(call not_implemented,agent-harnessing epic (spec §23.7))
