@@ -1,0 +1,70 @@
+# MTC CA — zero-cost local dev environment (spec §18.1, §9.6).
+#
+# Brings up:
+#   - LocalStack (S3 with versioning + Object Lock, DynamoDB) — spec §8.1/§8.2
+#   - SoftHSM2 (PKCS#11, ECDSA P-256 token) — spec §4 HSM dev row, §14
+#
+# Usage (from repo root):
+#   make dev-env-up      # or: docker compose -f deploy/local/docker-compose.yml up -d --build --wait
+#   make dev-env-smoke   # or: ./scripts/dev-env-smoke.sh
+#   make dev-env-reset   # or: ./scripts/dev-env-reset.sh
+#
+# Endpoint/env-var contract: see deploy/local/README.md and deploy/local/local.env.
+
+name: mtc-local
+
+services:
+  localstack:
+    # Pinned to the last community-edition major (4.x). The 2026 CalVer images
+    # require a LocalStack auth token/account, which violates the zero-cost,
+    # no-account local dev goal (§18.1, §1 non-goals). Bump deliberately.
+    image: localstack/localstack:4.14.0
+    container_name: mtc-localstack
+    ports:
+      - "127.0.0.1:4566:4566"
+    environment:
+      # Only the services the MTC data model needs (spec §8).
+      SERVICES: s3,dynamodb
+      EAGER_SERVICE_LOADING: "1"
+      SKIP_SSL_CERT_DOWNLOAD: "1"
+      DISABLE_EVENTS: "1"
+      # Consumed by the ready.d init script; keep in sync with local.env.
+      MTC_LOG_BUCKET: mtc-log-local
+      MTC_COORDINATION_TABLE: mtc-log-coordination
+    volumes:
+      - ./localstack/init/boot.d:/etc/localstack/init/boot.d:ro
+      - ./localstack/init/ready.d:/etc/localstack/init/ready.d:ro
+    healthcheck:
+      # Healthy only once the gateway is up AND the MTC init script finished
+      # (bucket + table exist), so `up --wait` means "ready to use".
+      test:
+        [
+          "CMD-SHELL",
+          "curl -sf http://localhost:4566/_localstack/health >/dev/null && test -f /tmp/mtc_init_done",
+        ]
+      interval: 2s
+      timeout: 5s
+      retries: 45
+      start_period: 5s
+
+  softhsm:
+    build: ./softhsm
+    image: mtc-softhsm:local
+    container_name: mtc-softhsm
+    environment:
+      SOFTHSM_TOKEN_LABEL: mtc-dev
+      SOFTHSM_SO_PIN: "0102030405060708"
+      SOFTHSM_USER_PIN: "1234"
+      SOFTHSM_KEY_LABEL: checkpoint-signing
+    volumes:
+      # Token state survives restarts; wiped by scripts/dev-env-reset.sh.
+      - softhsm-tokens:/var/lib/softhsm/tokens
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/softhsm_ready"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 2s
+
+volumes:
+  softhsm-tokens:
