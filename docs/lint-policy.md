@@ -48,18 +48,29 @@ Each entry states what is relaxed, where, and why.
    (`unwrap_is_permitted_in_test_code`) that fails clippy if this exemption
    ever regresses.
 
-2. **`avoid-breaking-exported-api = false`** (`clippy.toml`) — pedantic/nursery
+2. **`clock::SystemClock::now` carries the one sanctioned
+   `#[allow(clippy::disallowed_methods)]`** — `clippy.toml` disallows
+   `std::time::SystemTime::now` / `std::time::Instant::now` (rule
+   [`no-systemtime-now-in-prod`](../.claude/rules/no-systemtime-now-in-prod.md),
+   spec §22.11; table seeded by the dev-fake-clock ticket). Some wrapper must
+   ultimately read the ambient clock; `SystemClock` in `crates/clock` is that
+   wrapper, and its scoped allow is the only one permitted in production code.
+   Clippy has no test-exemption knob for this lint, so test code that
+   genuinely needs ambient time uses the same scoped allow with a justifying
+   comment.
+
+3. **`avoid-breaking-exported-api = false`** (`clippy.toml`) — pedantic/nursery
    fixes are applied even when they would change exported signatures. Pre-1.0
    workspace: we want the strictest form of these lints now, not after the
    public API ossifies.
 
-3. **`clippy::cargo_common_metadata` skips `publish = false` crates** — this is
+4. **`clippy::cargo_common_metadata` skips `publish = false` crates** — this is
    clippy's default (`cargo-ignore-publish = false`; despite the name, `true`
    would *force* linting of unpublishable crates). Internal crates such as the
    temporary `crates/placeholder` are not required to carry crates.io metadata
    (`description`, `keywords`, `categories`, ...).
 
-4. **rustfmt: stable options only** — the toolchain is pinned to stable
+5. **rustfmt: stable options only** — the toolchain is pinned to stable
    (`rust-toolchain.toml`), where unstable rustfmt options are silently
    ignored. Listing them would make `rustfmt.toml` claim more than
    `cargo fmt --check` enforces, so `imports_granularity`, `group_imports`,
