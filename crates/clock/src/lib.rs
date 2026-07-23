@@ -132,7 +132,7 @@ mod tests {
 
         // SystemTime is not strictly monotonic (NTP steps), so allow slack
         // rather than asserting exact ordering.
-        let slack = Duration::from_secs(60);
+        let slack = Duration::from_mins(1);
         assert!(observed + slack >= before, "SystemClock lags real time");
         assert!(observed <= after + slack, "SystemClock ahead of real time");
     }

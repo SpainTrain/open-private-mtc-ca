@@ -27,7 +27,7 @@ async fn sleep_completes_when_fake_clock_advances() {
     let clock = FakeClock::new(start());
 
     // `sleep` pins its deadline when called — before the advance below.
-    let mut sleeper = clock.sleep(Duration::from_secs(3600));
+    let mut sleeper = clock.sleep(Duration::from_hours(1));
 
     // Poll it once so its waker is registered while it is still pending.
     let still_pending = tokio::time::timeout(Duration::from_millis(50), &mut sleeper)
@@ -35,7 +35,7 @@ async fn sleep_completes_when_fake_clock_advances() {
         .is_err();
     assert!(still_pending, "sleeper woke before any advance");
 
-    clock.advance(Duration::from_secs(3600));
+    clock.advance(Duration::from_hours(1));
 
     tokio::time::timeout(Duration::from_secs(5), sleeper)
         .await
@@ -45,7 +45,7 @@ async fn sleep_completes_when_fake_clock_advances() {
 #[tokio::test]
 async fn sleep_does_not_complete_before_the_deadline() {
     let clock = FakeClock::new(start());
-    let mut sleeper = clock.sleep(Duration::from_secs(60));
+    let mut sleeper = clock.sleep(Duration::from_mins(1));
 
     // One second short of the deadline: the sleeper must still be pending.
     clock.advance(Duration::from_secs(59));
@@ -75,7 +75,7 @@ async fn set_also_wakes_sleepers() {
 
     let sleeper = tokio::spawn({
         let clock = Arc::clone(&clock);
-        async move { clock.sleep_until(start() + Duration::from_secs(300)).await }
+        async move { clock.sleep_until(start() + Duration::from_mins(5)).await }
     });
 
     clock
@@ -104,7 +104,7 @@ async fn multiple_sleepers_wake_on_one_advance() {
         assert!(still_pending, "sleeper woke before any advance");
     }
 
-    clock.advance(Duration::from_secs(180));
+    clock.advance(Duration::from_mins(3));
 
     for sleeper in sleepers {
         tokio::time::timeout(Duration::from_secs(5), sleeper)
@@ -117,7 +117,7 @@ async fn multiple_sleepers_wake_on_one_advance() {
 async fn cadence_loop_fires_instantly_under_fake_clock() {
     let wall = wall_timer();
     let clock = Arc::new(FakeClock::new(start()));
-    let cadence = Duration::from_secs(300);
+    let cadence = Duration::from_mins(5);
 
     // The batch loop only sees the injected trait object (§22.7).
     let batch_loop = tokio::spawn({
@@ -132,7 +132,7 @@ async fn cadence_loop_fires_instantly_under_fake_clock() {
     });
 
     // 15 simulated minutes; the three pending cadence ticks burst through.
-    clock.advance(Duration::from_secs(900));
+    clock.advance(Duration::from_mins(15));
 
     let fired_at = tokio::time::timeout(Duration::from_secs(5), batch_loop)
         .await
@@ -142,9 +142,9 @@ async fn cadence_loop_fires_instantly_under_fake_clock() {
     assert_eq!(
         fired_at,
         vec![
-            start() + Duration::from_secs(300),
-            start() + Duration::from_secs(600),
-            start() + Duration::from_secs(900),
+            start() + Duration::from_mins(5),
+            start() + Duration::from_mins(10),
+            start() + Duration::from_mins(15),
         ],
         "ticks must fire at their scheduled times",
     );

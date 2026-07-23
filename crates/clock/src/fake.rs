@@ -218,7 +218,7 @@ mod tests {
     #[test]
     fn set_forward_moves_the_clock() {
         let clock = FakeClock::new(start());
-        let target = start() + Duration::from_secs(86_400 * 400); // 400-day time travel (§18.4)
+        let target = start() + Duration::from_hours(9600); // 400-day time travel (§18.4)
         clock.set(target).expect("forward set must succeed");
         assert_eq!(clock.now(), target);
     }
@@ -269,12 +269,12 @@ mod tests {
         let worker = {
             let clock = Arc::clone(&clock);
             thread::spawn(move || {
-                clock.advance(Duration::from_secs(60));
+                clock.advance(Duration::from_mins(1));
             })
         };
         worker.join().expect("worker thread panicked");
 
-        assert_eq!(clock.now(), start() + Duration::from_secs(60));
+        assert_eq!(clock.now(), start() + Duration::from_mins(1));
     }
 
     #[test]

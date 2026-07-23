@@ -159,7 +159,7 @@ impl<C: AsyncClock> Interval<C> {
 
     /// Creates a ticker whose first tick is due at `first_tick`.
     #[must_use]
-    pub fn new_at(clock: C, first_tick: SystemTime, period: Duration) -> Self {
+    pub const fn new_at(clock: C, first_tick: SystemTime, period: Duration) -> Self {
         Self {
             clock,
             period,
