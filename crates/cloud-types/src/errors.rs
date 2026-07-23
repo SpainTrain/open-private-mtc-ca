@@ -60,7 +60,7 @@ pub enum CloudError {
     ///
     /// Returned by [`ReplicatedKv`](crate::ReplicatedKv) `put` /
     /// `atomic_update` / `transact` when any [`Condition`](crate::Condition)
-    /// evaluates false (e.g. DynamoDB `ConditionalCheckFailedException`).
+    /// evaluates false (e.g. `DynamoDB` `ConditionalCheckFailedException`).
     /// Losing a CAS is a normal protocol outcome — the lease/epoch protocol
     /// treats it as "another writer won" (spec §9.5) — so it is terminal at
     /// the transport level; callers re-read state and decide at the protocol
@@ -128,7 +128,7 @@ impl CloudError {
     /// assert!(!lost_cas.is_retryable());
     /// ```
     #[must_use]
-    pub fn is_retryable(&self) -> bool {
+    pub const fn is_retryable(&self) -> bool {
         matches!(
             self,
             Self::Transport {
@@ -146,7 +146,7 @@ impl CloudError {
     /// lease/epoch protocol and append-only writes treat as normal protocol
     /// signals rather than faults (spec §9.5).
     #[must_use]
-    pub fn is_precondition_failure(&self) -> bool {
+    pub const fn is_precondition_failure(&self) -> bool {
         matches!(
             self,
             Self::AlreadyExists { .. } | Self::ConditionFailed { .. }

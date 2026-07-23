@@ -1,7 +1,7 @@
 //! [`Hsm`] — hardware-backed signing (spec §9.1, §14).
 //!
-//! Backends: AWS CloudHSM / GCP Cloud HSM / Azure Managed HSM / on-prem
-//! PKCS#11 / SoftHSM2 (dev) / pure memory (tests).
+//! Backends: AWS `CloudHSM` / GCP Cloud HSM / Azure Managed HSM / on-prem
+//! PKCS#11 / `SoftHSM2` (dev) / pure memory (tests).
 //!
 //! Private keys live inside the HSM and never cross this boundary: the trait
 //! exposes handles, public keys, and signatures only. The §9.5 capabilities
@@ -16,7 +16,7 @@ use crate::errors::CloudError;
 /// An opaque reference to a private key held inside the HSM (newtype —
 /// .claude/rules/use-newtypes).
 ///
-/// The wrapped string is backend-defined (a CloudHSM key label, a PKCS#11
+/// The wrapped string is backend-defined (a `CloudHSM` key label, a PKCS#11
 /// token label/ID pair, a map key for the memory backend) and stable across
 /// process restarts for durable backends. It carries no key material.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -57,7 +57,7 @@ pub struct PublicKey(Vec<u8>);
 impl PublicKey {
     /// Wraps DER-encoded `SubjectPublicKeyInfo` bytes.
     #[must_use]
-    pub fn from_spki_der(der: Vec<u8>) -> Self {
+    pub const fn from_spki_der(der: Vec<u8>) -> Self {
         Self(der)
     }
 
@@ -129,7 +129,7 @@ pub trait Hsm: Send + Sync {
     /// # Capability bar (spec §9.5)
     ///
     /// HSM signing: only public material crosses the HSM boundary; the
-    /// export must round-trip with standard verifiers (e.g. RustCrypto
+    /// export must round-trip with standard verifiers (e.g. `RustCrypto`
     /// `p256` for [`KeySpec::EcdsaP256`]).
     ///
     /// # Errors
@@ -161,7 +161,7 @@ pub trait Hsm: Send + Sync {
     ///
     /// FIPS validation is a property of the deployed HSM, not of this source:
     /// CloudHSM-backed implementations return `true` (validation inherited
-    /// from the hardware); SoftHSM2 and memory backends return `false` and
+    /// from the hardware); `SoftHSM2` and memory backends return `false` and
     /// are dev/test-only. Compliance reports include this value (spec §20.3),
     /// and CI blocks non-FIPS builds from production
     /// (.claude/rules/fips-boundary-preserved).
@@ -181,7 +181,7 @@ mod tests {
         let handle = KeyHandle::new("checkpoint-signing-v1");
         assert_eq!(handle.as_str(), "checkpoint-signing-v1");
         assert_eq!(handle.to_string(), "checkpoint-signing-v1");
-        assert_eq!(handle.clone().into_string(), "checkpoint-signing-v1");
+        assert_eq!(handle.into_string(), "checkpoint-signing-v1");
     }
 
     #[test]

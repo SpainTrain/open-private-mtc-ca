@@ -1,6 +1,6 @@
 //! [`ObjectStore`] — durable, immutable object storage (spec §9.1).
 //!
-//! Backends: S3 / GCS / Azure Blob / MinIO / on-prem / pure memory.
+//! Backends: S3 / GCS / Azure Blob / `MinIO` / on-prem / pure memory.
 //!
 //! The store holds the certificate transparency log's append-only artifacts
 //! (entries, tiles, checkpoints — spec §8). Two §9.5 capabilities anchor every

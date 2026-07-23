@@ -155,7 +155,7 @@ impl Hsm for StubBackend {
     }
 }
 
-fn assert_send_sync<T: Send + Sync + ?Sized>() {}
+const fn assert_send_sync<T: Send + Sync + ?Sized>() {}
 
 /// Compile-time proof: each trait is object-safe (`dyn Trait` is a valid
 /// type) and its trait objects are `Send + Sync`, so `Arc<dyn Trait>` can be
@@ -221,7 +221,7 @@ async fn object_store_methods_are_callable_through_arc_dyn() {
 #[tokio::test]
 async fn object_lock_methods_are_callable_through_arc_dyn() {
     let lock: Arc<dyn ObjectLock> = Arc::new(StubBackend);
-    let retain_until = fixed_time() + Duration::from_secs(3600);
+    let retain_until = fixed_time() + Duration::from_hours(1);
 
     lock.put_with_retention("checkpoints/0001", b"cp", retain_until)
         .await

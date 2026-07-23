@@ -6,10 +6,10 @@
 //!
 //! | Trait | Capability | Example backends |
 //! |---|---|---|
-//! | [`ObjectStore`] | Durable, immutable object storage | S3, GCS, Azure Blob, MinIO, memory |
+//! | [`ObjectStore`] | Durable, immutable object storage | S3, GCS, Azure Blob, `MinIO`, memory |
 //! | [`ObjectLock`] | Storage-layer retention locking | S3 Object Lock, GCS Object Retention, Azure Immutable Storage |
-//! | [`ReplicatedKv`] | Replicated KV with conditional + transactional writes | DynamoDB Global Tables, Firestore, Cosmos DB, Etcd, Postgres+CDC |
-//! | [`Hsm`] | Hardware-backed signing | CloudHSM, Cloud HSM, Managed HSM, PKCS#11/SoftHSM2, memory |
+//! | [`ReplicatedKv`] | Replicated KV with conditional + transactional writes | `DynamoDB` Global Tables, Firestore, Cosmos DB, Etcd, Postgres+CDC |
+//! | [`Hsm`] | Hardware-backed signing | `CloudHSM`, Cloud HSM, Managed HSM, PKCS#11/SoftHSM2, memory |
 //!
 //! This crate contains only the trait definitions, common DTOs, and the
 //! shared error taxonomy ([`CloudError`]). Backend implementations live in

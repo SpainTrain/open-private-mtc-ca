@@ -1,6 +1,6 @@
 //! [`ReplicatedKv`] — replicated key-value coordination state (spec §9.1).
 //!
-//! Backends: DynamoDB Global Tables / Firestore / Cosmos DB / Etcd /
+//! Backends: `DynamoDB` Global Tables / Firestore / Cosmos DB / Etcd /
 //! Postgres+CDC / pure memory.
 //!
 //! This is the coordination substrate for the lease/epoch protocol and the
@@ -79,7 +79,7 @@ pub enum Value {
     Bytes(Vec<u8>),
     /// Nested attribute map; the top-level value of a structured item.
     /// `BTreeMap` keeps attribute iteration deterministic.
-    Map(BTreeMap<String, Value>),
+    Map(BTreeMap<String, Self>),
 }
 
 /// A stored item: a [`Key`] plus its current [`Value`].
@@ -361,7 +361,7 @@ mod tests {
         let key = Key::new("lease/primary");
         assert_eq!(key.as_str(), "lease/primary");
         assert_eq!(key.to_string(), "lease/primary");
-        assert_eq!(key.clone().into_string(), "lease/primary");
+        assert_eq!(key.into_string(), "lease/primary");
     }
 
     #[test]
