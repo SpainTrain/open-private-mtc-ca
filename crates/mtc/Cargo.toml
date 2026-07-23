@@ -38,8 +38,10 @@ rand_core = { version = "0.6", features = ["getrandom"] } # OsRng for key genera
 # Not in [workspace.dependencies]; pinned here for the compile-fail test
 # harness only (spec §22.1 guarantee is proven by tests/compile_fail/).
 trybuild = "1.0"
-# Property-based Merkle-tree invariants (spec §19.2): determinism, append
-# stability, and subtree-decomposition coverage/bound.
+# Property-based tests (spec §19.2, §19.3 layer 1). Merkle-tree invariants
+# (determinism, append stability, subtree-decomposition coverage/bound) and the
+# wire codec (arbitrary bytes never panic the parser; round-trips hold).
+# Workspace-pinned.
 proptest = { workspace = true }
 
 [lints]
