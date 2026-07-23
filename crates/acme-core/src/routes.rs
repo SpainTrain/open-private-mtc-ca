@@ -38,7 +38,7 @@ pub const JOSE_JSON: &str = "application/jose+json";
 
 /// The `Replay-Nonce` header name (RFC 8555 §6.5.1).
 #[must_use]
-pub fn replay_nonce_header() -> HeaderName {
+pub const fn replay_nonce_header() -> HeaderName {
     HeaderName::from_static("replay-nonce")
 }
 

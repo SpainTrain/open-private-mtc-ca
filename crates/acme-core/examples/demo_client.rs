@@ -15,6 +15,7 @@
 //!
 //! Exits non-zero if any expectation fails.
 
+use std::fmt::Write as _;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -51,7 +52,7 @@ async fn http(
     let mut request = format!("{method} {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n");
     if let Some(body) = body {
         request.push_str("Content-Type: application/jose+json\r\n");
-        request.push_str(&format!("Content-Length: {}\r\n", body.len()));
+        let _ = write!(request, "Content-Length: {}\r\n", body.len());
     }
     request.push_str("\r\n");
     if let Some(body) = body {

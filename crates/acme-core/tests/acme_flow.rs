@@ -2,6 +2,11 @@
 //! flow — fetch the directory, obtain a nonce, register an account, and
 //! demonstrate single-use nonce semantics.
 
+// Integration-test helpers sit outside #[test] fns, so the
+// allow-expect-in-tests exemption does not reach them (documented
+// scoped-allow pattern, docs/lint-policy.md deviation 1).
+#![allow(clippy::expect_used)]
+
 use std::sync::Arc;
 
 use acme_core::client::{signed_request_body, ClientBinding};

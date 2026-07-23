@@ -1,5 +1,5 @@
 //! Typed metrics facade for the MTC CA — the spec §20.1 metric set with
-//! Prometheus-compatible exposition and CloudWatch EMF emission, usable from
+//! Prometheus-compatible exposition and `CloudWatch` EMF emission, usable from
 //! Fargate services and Lambdas (ticket obs-metrics-core).
 //!
 //! One registry, two exporters:
@@ -7,9 +7,9 @@
 //! - **Prometheus**: [`MetricsRegistry::encode_prometheus_text`] renders the
 //!   text exposition format; [`serve_admin`] serves it at `GET /metrics` on
 //!   an admin port ([`DEFAULT_ADMIN_PORT`]).
-//! - **CloudWatch EMF**: [`EmfEmitter`] (gated behind [`EmfConfig`]) turns
+//! - **`CloudWatch` EMF**: [`EmfEmitter`] (gated behind [`EmfConfig`]) turns
 //!   the same registry into Embedded-Metric-Format JSON log lines — plain
-//!   structured logging, ingestible by LocalStack CloudWatch Logs in dev.
+//!   structured logging, ingestible by `LocalStack` `CloudWatch` Logs in dev.
 //!   No AWS SDK types appear anywhere in this crate (§22.8).
 //!
 //! [`CaMetrics::register`] constructs all 13 §20.1 metrics with their exact
@@ -22,7 +22,7 @@
 //!   [`TimestampMillis`], obtained by the caller from its injected `Clock`.
 //! - **EMF histograms** are arrays of raw observations (capped at 100 per
 //!   flush) because the published EMF specification represents distributions
-//!   as value arrays; **EMF counters** are per-flush deltas so CloudWatch
+//!   as value arrays; **EMF counters** are per-flush deltas so `CloudWatch`
 //!   `Sum` aggregation is correct.
 //! - **Wiring** metrics into CA service components belongs to ticket
 //!   obs-service-instrumentation; dashboards/alarms to

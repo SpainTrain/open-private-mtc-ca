@@ -1,7 +1,7 @@
 //! Metric registry and typed instrument handles.
 //!
 //! [`MetricsRegistry`] is the single registration point backing both
-//! exporters (Prometheus text exposition and CloudWatch EMF). The typed
+//! exporters (Prometheus text exposition and `CloudWatch` EMF). The typed
 //! handles ([`Counter`], [`Gauge`], [`Histogram`], [`LabeledCounter`]) keep
 //! the backing implementation crate out of the public API, and
 //! [`CaMetrics::register`] constructs the full §20.1 metric set with the
@@ -31,7 +31,7 @@ const MAX_RAW_OBSERVATIONS: usize = 100;
 /// Raw histogram observations retained for the EMF exporter, which emits
 /// value arrays (the published EMF format has no bucketed representation).
 #[derive(Debug, Default)]
-pub(crate) struct RawObservations {
+pub struct RawObservations {
     values: Mutex<Vec<f64>>,
 }
 
@@ -70,6 +70,10 @@ impl MetricsRegistry {
     }
 
     /// Registers a monotonic counter.
+    ///
+    /// # Errors
+    /// Returns `MetricsError` if a metric with this name is already
+    /// registered with a different kind or help text.
     pub fn counter(&self, name: &'static str, help: &'static str) -> Result<Counter, MetricsError> {
         let inner = prometheus::IntCounter::new(name, help).map_err(|e| registration_error(&e))?;
         self.inner
@@ -79,6 +83,10 @@ impl MetricsRegistry {
     }
 
     /// Registers a labeled monotonic counter with a single label dimension.
+    ///
+    /// # Errors
+    /// Returns `MetricsError` if a metric with this name is already
+    /// registered with a different kind, labels, or help text.
     pub fn labeled_counter(
         &self,
         name: &'static str,
@@ -94,6 +102,10 @@ impl MetricsRegistry {
     }
 
     /// Registers a gauge.
+    ///
+    /// # Errors
+    /// Returns `MetricsError` if a metric with this name is already
+    /// registered with a different kind or help text.
     pub fn gauge(&self, name: &'static str, help: &'static str) -> Result<Gauge, MetricsError> {
         let inner = prometheus::Gauge::new(name, help).map_err(|e| registration_error(&e))?;
         self.inner
@@ -103,6 +115,10 @@ impl MetricsRegistry {
     }
 
     /// Registers a histogram with the given bucket upper bounds.
+    ///
+    /// # Errors
+    /// Returns `MetricsError` if a metric with this name is already
+    /// registered with a different kind, buckets, or help text.
     pub fn histogram(
         &self,
         name: &'static str,
@@ -124,6 +140,10 @@ impl MetricsRegistry {
 
     /// Encodes the current state of every registered metric in the
     /// Prometheus text exposition format (version 0.0.4).
+    ///
+    /// # Errors
+    /// Returns `MetricsError` if the underlying encoder fails or the
+    /// output is not valid UTF-8.
     pub fn encode_prometheus_text(&self) -> Result<String, MetricsError> {
         use prometheus::Encoder as _;
 

@@ -21,7 +21,7 @@ pub struct MonotonicMillis(pub u64);
 impl MonotonicMillis {
     /// Adds `millis`, saturating at `u64::MAX`.
     #[must_use]
-    pub fn saturating_add(self, millis: u64) -> Self {
+    pub const fn saturating_add(self, millis: u64) -> Self {
         Self(self.0.saturating_add(millis))
     }
 }

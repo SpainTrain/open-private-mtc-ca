@@ -40,13 +40,13 @@ pub struct AdminServer {
 impl AdminServer {
     /// The bound address (useful with port 0 for tests).
     #[must_use]
-    pub fn local_addr(&self) -> SocketAddr {
+    pub const fn local_addr(&self) -> SocketAddr {
         self.local_addr
     }
 
     /// Stops accepting connections and waits for the listener task to exit.
     pub async fn shutdown(self) {
-        let AdminServer { shutdown, task, .. } = self;
+        let Self { shutdown, task, .. } = self;
         // Both results are best-effort: the task may already be gone.
         let _ = shutdown.send(());
         let _ = task.await;
@@ -147,7 +147,7 @@ fn route(request_line: &str, registry: &MetricsRegistry) -> (u16, &'static str, 
     }
 }
 
-fn reason(status: u16) -> &'static str {
+const fn reason(status: u16) -> &'static str {
     match status {
         200 => "OK",
         404 => "Not Found",

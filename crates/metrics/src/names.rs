@@ -27,7 +27,7 @@ pub struct MetricSpec {
     pub kind: InstrumentKind,
     /// Prometheus label names (empty for unlabeled metrics).
     pub labels: &'static [&'static str],
-    /// CloudWatch unit emitted by the EMF exporter (a valid EMF `Unit` value).
+    /// `CloudWatch` unit emitted by the EMF exporter (a valid EMF `Unit` value).
     pub unit: &'static str,
     /// Prometheus `# HELP` text.
     pub help: &'static str,
@@ -57,7 +57,7 @@ pub const TILE_CACHE_HITS_TOTAL: &str = "tile_cache_hits_total";
 pub const TILE_CACHE_MISSES_TOTAL: &str = "tile_cache_misses_total";
 /// S3 cross-region replication lag (gauge, seconds).
 pub const CRR_REPLICATION_LAG_SECONDS: &str = "crr_replication_lag_seconds";
-/// DynamoDB global-table replication lag (gauge, seconds).
+/// `DynamoDB` global-table replication lag (gauge, seconds).
 pub const DDB_REPLICATION_LAG_SECONDS: &str = "ddb_replication_lag_seconds";
 
 /// Label on [`ENTRIES_BY_SOURCE_TOTAL`] identifying the intake source (§10).

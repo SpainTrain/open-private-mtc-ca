@@ -132,7 +132,7 @@ pub struct ProtectedHeader {
     /// Anti-replay nonce (required on all authenticated requests).
     #[serde(default)]
     pub nonce: Option<String>,
-    /// The exact URL the client believes it is POSTing to (RFC 8555 §6.4).
+    /// The exact URL the client believes it is `POSTing` to (RFC 8555 §6.4).
     #[serde(default)]
     pub url: Option<String>,
     /// Inline public key — used for `new-account` only.
@@ -206,7 +206,7 @@ impl Jws {
 
     /// The parsed protected header.
     #[must_use]
-    pub fn protected(&self) -> &ProtectedHeader {
+    pub const fn protected(&self) -> &ProtectedHeader {
         &self.protected
     }
 
@@ -245,7 +245,7 @@ impl Jws {
             .ok_or(AcmeError::BadNonce)
     }
 
-    /// Enforces the protected `url` matches the URL actually POSTed to
+    /// Enforces the protected `url` matches the URL actually `POSTed` to
     /// (RFC 8555 §6.4).
     ///
     /// # Errors
@@ -566,7 +566,7 @@ mod tests {
             Jwk {
                 x: Base64UrlUnpadded::encode_string(&[0u8; 32]),
                 y: Base64UrlUnpadded::encode_string(&[1u8; 32]),
-                ..good.clone()
+                ..good
             },
         ];
         for jwk in cases {

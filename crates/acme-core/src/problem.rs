@@ -29,7 +29,7 @@ pub enum ProblemType {
 impl ProblemType {
     /// The registered `urn:ietf:params:acme:error:*` identifier.
     #[must_use]
-    pub fn urn(self) -> &'static str {
+    pub const fn urn(self) -> &'static str {
         match self {
             Self::BadNonce => "urn:ietf:params:acme:error:badNonce",
             Self::BadSignatureAlgorithm => "urn:ietf:params:acme:error:badSignatureAlgorithm",
@@ -43,7 +43,7 @@ impl ProblemType {
 
     /// Default HTTP status for this problem type.
     #[must_use]
-    pub fn status(self) -> StatusCode {
+    pub const fn status(self) -> StatusCode {
         match self {
             Self::BadNonce
             | Self::BadSignatureAlgorithm
@@ -75,7 +75,7 @@ pub struct ProblemDocument {
 impl ProblemDocument {
     /// Builds a problem document with the type's default status.
     #[must_use]
-    pub fn new(problem_type: ProblemType, detail: String) -> Self {
+    pub const fn new(problem_type: ProblemType, detail: String) -> Self {
         Self {
             problem_type: problem_type.urn(),
             detail,

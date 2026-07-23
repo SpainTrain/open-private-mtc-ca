@@ -1,15 +1,15 @@
-//! CloudWatch Embedded Metric Format (EMF) emission.
+//! `CloudWatch` Embedded Metric Format (EMF) emission.
 //!
 //! EMF is **structured JSON logging**: each flush produces self-describing
-//! JSON log events whose `_aws` metadata tells CloudWatch which root members
+//! JSON log events whose `_aws` metadata tells `CloudWatch` which root members
 //! to extract as metrics. The events are plain lines written to whatever log
 //! sink the service uses (stdout under Fargate/Lambda log drivers); the log
-//! pipeline — LocalStack CloudWatch Logs in dev (§1: no real AWS spend) —
+//! pipeline — `LocalStack` `CloudWatch` Logs in dev (§1: no real AWS spend) —
 //! ingests them. No AWS SDK types are involved anywhere (§22.8): this module
 //! only builds `serde_json` values.
 //!
 //! Semantics per instrument kind:
-//! - **Counters** are emitted as *per-flush deltas*, so CloudWatch `Sum`
+//! - **Counters** are emitted as *per-flush deltas*, so `CloudWatch` `Sum`
 //!   aggregation over a period equals the true count.
 //! - **Gauges** are emitted as their current value.
 //! - **Histograms** are emitted as arrays of the raw observations recorded
@@ -17,7 +17,7 @@
 //!   distributions as value arrays, capped at 100 values per event).
 //!
 //! Labeled metrics (e.g. `entries_by_source_total{source_type}`) become
-//! separate events whose label is an extra CloudWatch dimension.
+//! separate events whose label is an extra `CloudWatch` dimension.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::Write;
@@ -47,7 +47,7 @@ pub const DEFAULT_EMF_NAMESPACE: &str = "MtcCa";
 pub struct EmfConfig {
     /// Master switch; when `false`, [`EmfEmitter::from_config`] yields `None`.
     pub enabled: bool,
-    /// CloudWatch metrics namespace (falls back to [`DEFAULT_EMF_NAMESPACE`]).
+    /// `CloudWatch` metrics namespace (falls back to [`DEFAULT_EMF_NAMESPACE`]).
     pub namespace: String,
     /// Dimensions stamped on every event, e.g. `service` and `region`
     /// (§20.1 standard fields).
@@ -58,7 +58,7 @@ pub struct EmfConfig {
 impl EmfConfig {
     /// A disabled configuration (the default).
     #[must_use]
-    pub fn disabled() -> Self {
+    pub const fn disabled() -> Self {
         Self {
             enabled: false,
             namespace: String::new(),
@@ -80,7 +80,7 @@ struct Sample {
     value: Value,
 }
 
-/// CloudWatch EMF exporter over a [`MetricsRegistry`].
+/// `CloudWatch` EMF exporter over a [`MetricsRegistry`].
 ///
 /// Stateful: tracks the previously seen counter values (for delta emission),
 /// so a service should hold exactly one emitter per registry.
@@ -188,7 +188,11 @@ impl EmfEmitter {
     }
 
     /// Flushes as newline-delimited JSON to `writer` (one event per line),
-    /// the framing CloudWatch Logs agents and LocalStack ingest directly.
+    /// the framing `CloudWatch` Logs agents and `LocalStack` ingest directly.
+    ///
+    /// # Errors
+    /// Returns `MetricsError` if serializing an event or writing to
+    /// `writer` fails; already-written lines are not rolled back.
     pub fn flush_to<W: Write>(
         &mut self,
         writer: &mut W,
@@ -249,7 +253,7 @@ impl EmfEmitter {
     }
 }
 
-/// CloudWatch unit for a §20.1 metric name (`None` for unknown names).
+/// `CloudWatch` unit for a §20.1 metric name (`None` for unknown names).
 fn unit_for(name: &str) -> Option<&'static str> {
     names::spec_for(name).map(|spec| spec.unit)
 }
@@ -267,16 +271,14 @@ fn sample_key(name: &str, labels: &[(String, String)]) -> String {
 }
 
 /// Renders `value` as a JSON number, preferring integer representation for
-/// whole values (counters). Non-finite values collapse to 0 — CloudWatch
+/// whole values (counters). Non-finite values collapse to 0 — `CloudWatch`
 /// rejects NaN/Inf, and no §20.1 instrument can legitimately produce them.
 fn json_number(value: f64) -> Value {
     #[allow(clippy::cast_possible_truncation)]
     if value.is_finite() && value.fract() == 0.0 && value.abs() < 9_007_199_254_740_992.0 {
         Value::from(value as i64)
     } else {
-        serde_json::Number::from_f64(value)
-            .map(Value::Number)
-            .unwrap_or_else(|| Value::from(0))
+        serde_json::Number::from_f64(value).map_or_else(|| Value::from(0), Value::Number)
     }
 }
 

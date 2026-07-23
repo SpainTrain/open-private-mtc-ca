@@ -1,11 +1,16 @@
 //! Validates emitted EMF events against the published EMF JSON schema.
 //!
-//! `emf-schema.json` is transcribed from the AWS CloudWatch documentation
+//! `emf-schema.json` is transcribed from the AWS `CloudWatch` documentation
 //! page "Specification: Embedded metric format" (the published EMF JSON
 //! schema). On top of schema validation, this suite checks the cross-member
 //! rules the specification states in prose: every dimension reference and
 //! every declared metric name must exist as a root-level member of the event,
 //! with the right JSON type.
+
+// Integration-test helpers sit outside #[test] fns, so the
+// allow-expect-in-tests exemption does not reach them (documented
+// scoped-allow pattern, docs/lint-policy.md deviation 1).
+#![allow(clippy::expect_used)]
 
 use std::collections::{BTreeMap, BTreeSet};
 
