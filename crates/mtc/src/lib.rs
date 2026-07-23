@@ -31,7 +31,12 @@
 #![allow(clippy::multiple_crate_versions)]
 
 pub mod error;
+pub mod signing;
 pub mod types;
 
 pub use error::{HashOutputError, IdError};
+pub use signing::{
+    scheme_for, EcdsaP256, KeyRejected, SignError, Signature, SignatureAlgorithm, SignatureScheme,
+    SigningKey, UnknownAlgorithm, UnsupportedAlgorithm, VerifyError, VerifyingKey,
+};
 pub use types::{BatchId, BatchTag, Epoch, HashOutput, Id, Index, LogId, LogTag, TreeSize};
