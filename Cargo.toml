@@ -37,9 +37,24 @@ proptest = "1"
 pretty_assertions = "1"
 mockall = "0.13"
 
-# Lint baseline (spec §22.12). Only `unsafe_code = "forbid"` is set here; the
-# strict clippy regime (pedantic/nursery/cargo, unwrap/expect bans, missing_docs)
-# lands with the fnd-rust-lint-config ticket. Member crates opt in with
-# `[lints] workspace = true`.
+# Lint baseline (spec §22.12). Member crates opt in with `[lints] workspace =
+# true`. Levels live here; per-lint behavior knobs live in clippy.toml; the
+# deviation policy (current allows, test exemption, PKCS#11 unsafe exception)
+# is documented in docs/lint-policy.md.
 [workspace.lints.rust]
+# No unsafe blocks anywhere. Sole sanctioned exception: a future PKCS#11 FFI
+# crate, which must NOT inherit this table — see docs/lint-policy.md.
 unsafe_code = "forbid"
+# Every public item is documented. "warn" locally; CI's -D warnings makes it a
+# hard failure (§22.13).
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+# Lint groups at priority -1 so the individual lints below can override them.
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+# Denied in non-test code; tests are exempt via clippy.toml's
+# allow-unwrap-in-tests / allow-expect-in-tests (the documented pattern).
+unwrap_used = "deny"
+expect_used = "deny"

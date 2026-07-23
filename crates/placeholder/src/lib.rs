@@ -15,7 +15,7 @@
 /// assert_eq!(mtc_placeholder::marker(), "mtc-placeholder");
 /// ```
 #[must_use]
-pub fn marker() -> &'static str {
+pub const fn marker() -> &'static str {
     "mtc-placeholder"
 }
 
@@ -26,5 +26,15 @@ mod tests {
     #[test]
     fn marker_is_stable() {
         assert_eq!(marker(), "mtc-placeholder");
+    }
+
+    // The `unwrap()` below deliberately exercises the spec §22.12 test
+    // exemption (`allow-unwrap-in-tests` in clippy.toml): `unwrap_used` is
+    // denied in production code but permitted here. If the lint config ever
+    // regresses, `cargo clippy --all-targets` fails on this line.
+    #[test]
+    fn unwrap_is_permitted_in_test_code() {
+        let prefix = marker().get(0..3);
+        assert_eq!(prefix.unwrap(), "mtc");
     }
 }

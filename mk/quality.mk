@@ -1,13 +1,18 @@
-# Code-quality targets (spec §22.12, §22.13, §19.11). Stubs today; implemented
-# by the lint-config, license-policy, and testing tickets named below.
+# Code-quality targets (spec §22.12, §22.13, §19.11). fmt/lint are live
+# (fnd-rust-lint-config); the rest are stubs implemented by the tickets named
+# below. Lint levels: Cargo.toml [workspace.lints.*]; knobs: clippy.toml /
+# rustfmt.toml; deviation policy: docs/lint-policy.md.
 
-.PHONY: fmt lint audit bench
+.PHONY: fmt fmt-check lint audit bench
 
-fmt: ## Format all code
-	$(call not_implemented,fnd-rust-lint-config)
+fmt: ## Format all code (rustfmt, workspace-wide)
+	cargo fmt --all
 
-lint: ## Run all linters
-	$(call not_implemented,fnd-rust-lint-config)
+fmt-check: ## Check formatting without rewriting (the CI gate, spec §22.13)
+	cargo fmt --all --check
+
+lint: fmt-check ## Run all linters: rustfmt check + clippy -D warnings (spec §22.12)
+	cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 audit: ## Run the self-auditor manually
 	$(call not_implemented,dev-audit-demo-wiring)

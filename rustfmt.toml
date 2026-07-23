@@ -1,0 +1,13 @@
+# rustfmt.toml — workspace formatting rules (spec §22.12).
+#
+# Stable-channel options only. The toolchain is pinned to stable
+# (rust-toolchain.toml), where unstable rustfmt options are silently ignored —
+# listing them here would make this file lie about what `cargo fmt --check`
+# actually enforces. Candidates to adopt if/when they stabilize:
+# imports_granularity, group_imports, wrap_comments, format_code_in_doc_comments.
+
+edition = "2021"
+max_width = 100
+newline_style = "Unix"
+use_field_init_shorthand = true
+use_try_shorthand = true
