@@ -243,9 +243,6 @@ impl<const N: usize> TlsParse for [u8; N] {
     }
 }
 
-/// Serializes `value`, parses the bytes back, and returns both the wire bytes
-/// and the re-parsed value.
-///
 /// Asserts the round-trip identity `parse(serialize(x)) == x` and returns the
 /// serialized bytes.
 ///
