@@ -1,0 +1,396 @@
+{
+  "epic": {
+    "slug": "admin-surface",
+    "title": "Admin Surface (CLI + UI + API)",
+    "description": "Build the complete admin surface for the MTC CA: an axum admin API defined by OpenAPI (spec §17.2), the mtcctl CLI built with clap v4 (§17.3), and an htmx+Askama+SSE web UI embedded in the CA service binary (§17.4) — with enforced full CLI/UI parity so every operation is available on both surfaces (§17.1). Both consumers ride the foundation-owned OpenAPI codegen pipeline, and each admin operation lands vertically: OpenAPI change, server handler, CLI subcommand, UI view, and CLI-driven E2E test (§17.5, §19.13)."
+  },
+  "tickets": [
+    {
+      "slug": "admin-api-core",
+      "title": "Admin API core: axum crate serving OpenAPI-generated server stubs",
+      "description": "## Goal\nStand up `crates/admin` as the admin API core (spec §17.2): an axum app mounting routes from OpenAPI-generated Rust server stubs. This is the single API both mtcctl and the UI consume, and the anchor for all admin-surface work.\n\n## Acceptance Criteria\n- `crates/admin` exists with `lib.rs` mounting API routes (axum), per the layout in §17.4\n- Routes implemented against Rust server stubs generated from `api/admin.openapi.yaml` via `make api-gen` (foundation pipeline)\n- Health/version endpoint implemented end-to-end as the first operation (spec -> stub -> handler)\n- Shared JSON error model (problem-details style) with typed handler errors\n- `AppState` seam injects CA-service state handles as trait objects so handlers run against the memory backend in tests\n- API mounted in the CA service binary, reachable on localhost:8080 in dev mode\n\n## Out of Scope\n- IAM auth middleware (adm-auth-middleware)\n- UI routes/templates (adm-ui-shell)\n- Business operations beyond health/version (per-operation tickets)\n- The codegen pipeline itself (foundation-infra: openapi-codegen-pipeline)\n\n## Testing\n- Unit: handler tests against in-memory AppState (§19.1, no external deps)\n- Integration: axum/tower test client over the mounted router; check that regenerated code compiles in CI\n\n## Demo\n`cargo run -p ca-service` (dev mode) then `curl localhost:8080/api/healthz` returns JSON status.",
+      "size": "M",
+      "priority": 0,
+      "phase": 0,
+      "deps": [
+        "openapi-codegen-pipeline"
+      ],
+      "labels": [
+        "api",
+        "anchor"
+      ]
+    },
+    {
+      "slug": "adm-mtcctl-skeleton",
+      "title": "mtcctl CLI skeleton: clap v4 tree, generated client wiring, output formats",
+      "description": "## Goal\nCreate `crates/mtcctl` with the full clap v4 (derive) subcommand tree from §17.3, wired to the OpenAPI-generated Rust client, with the global output-format contract agents and scripts rely on.\n\n## Acceptance Criteria\n- `crates/mtcctl` binary with the complete §17.3 subcommand tree declared; unimplemented leaves exit non-zero with a clear 'not yet implemented' message\n- Global flags: `--output human|json|yaml` (human default), `--endpoint`, `--yes`/`--confirm` plumbed through (enforcement in adm-privileged-confirm)\n- Uses the OpenAPI-generated Rust client (§17.2) for all API calls; no hand-rolled HTTP\n- Output layer: human tables, `--output json` and `--output yaml` via serde on the same response types\n- `mtcctl status` returns live data from the health/version endpoint as first working command\n- Errors map to distinct exit codes; stderr for diagnostics, stdout for payload\n\n## Out of Scope\n- Individual operation implementations (per-operation tickets)\n- REPL and shell completion (adm-repl, adm-completion)\n- Request signing (adm-auth-middleware)\n\n## Testing\n- Unit: clap parse tests (`Command::debug_assert`), output-format snapshot tests\n- Integration: run binary against an in-process axum test server; assert JSON output is stable\n\n## Demo\n`mtcctl status --output json | jq .version` against `make demo` environment.",
+      "size": "M",
+      "priority": 0,
+      "phase": 0,
+      "deps": [
+        "openapi-codegen-pipeline",
+        "admin-api-core"
+      ],
+      "labels": [
+        "cli"
+      ]
+    },
+    {
+      "slug": "adm-ui-shell",
+      "title": "Admin UI shell: htmx + Askama layout, rust-embed static assets",
+      "description": "## Goal\nBuild the basic admin UI shell (roadmap Phase 0; spec §17.4): Askama compile-time templates, vendored htmx, static assets embedded via rust-embed, served from the same axum app as the API.\n\n## Acceptance Criteria\n- `crates/admin/templates/` with `layout.html`, `partials/`, `pages/` structure per §17.4; `templates.rs` holds Askama template structs\n- `static/` with vendored `htmx.min.js` and `styles.css`, embedded via `rust-embed` and served from the binary (no external CDN, no JS build toolchain)\n- UI routes mounted in `crates/admin` `lib.rs` alongside API routes\n- Dashboard placeholder page renders with nav linking every planned view from the §17.4 table (stub pages OK)\n- Askama compile-time checking active: a template referencing a missing field fails the build\n\n## Out of Scope\n- SSE real-time updates (adm-sse-stream)\n- Real data on any page (per-operation tickets)\n- Tree visualization (observability epic)\n\n## Testing\n- Unit: template render tests for layout and placeholder pages\n- Integration: axum test client asserts 200 + text/html for each route and embedded asset\n\n## Demo\n`make demo` then open `localhost:8080` — dashboard shell with nav renders, assets load offline.",
+      "size": "M",
+      "priority": 1,
+      "phase": 0,
+      "deps": [
+        "admin-api-core"
+      ],
+      "labels": [
+        "ui"
+      ]
+    },
+    {
+      "slug": "adm-completion",
+      "title": "mtcctl shell completion (bash, zsh, fish)",
+      "description": "## Goal\nImplement `mtcctl completion` per §17.3 so operators and agents get shell completion for the full subcommand tree.\n\n## Acceptance Criteria\n- `mtcctl completion bash|zsh|fish` emits a valid completion script via `clap_complete` derived from the real command tree\n- Completion output goes to stdout so it can be sourced or installed (`mtcctl completion bash > ...`)\n- Unsupported shell arguments produce a clear error listing supported shells\n- README/CLI help documents installation per shell\n\n## Out of Scope\n- Dynamic completion of server-side values (batch IDs, indices)\n- REPL tab-completion (adm-repl)\n\n## Testing\n- Unit: generation succeeds for all three shells; snapshot test that bash output contains top-level subcommands\n- E2E: shell script sources the bash completion under bash and asserts no syntax error\n\n## Demo\n`source <(mtcctl completion bash)` then tab-complete `mtcctl lo<TAB>` to `log`.",
+      "size": "S",
+      "priority": 2,
+      "phase": 0,
+      "deps": [
+        "adm-mtcctl-skeleton"
+      ],
+      "labels": [
+        "cli",
+        "dev-experience"
+      ]
+    },
+    {
+      "slug": "adm-auth-middleware",
+      "title": "Admin API auth: SigV4 verification middleware + CLI request signing",
+      "description": "## Goal\nImplement authentication for the admin surface per §17.3: AWS IAM via signed requests on the API, with mtcctl signing requests from the standard AWS credential chain, plus a dev-mode bypass so everything still runs on a laptop (§1 non-goals, §18).\n\n## Acceptance Criteria\n- tower middleware on `crates/admin` API routes verifies SigV4 signatures; unauthenticated requests get 401 with the shared error model\n- Privileged operations are tagged in `api/admin.openapi.yaml` (e.g. `x-privileged: true`) and the middleware enforces an elevated principal for them (403 otherwise)\n- mtcctl signs requests using the AWS default credential chain; works against LocalStack-style dummy credentials\n- Dev bypass requires BOTH a `dev-auth` cargo feature and `MTC_DEV_AUTH=off` config; a test asserts a build without the feature returns 401 regardless of the config flag\n- htmx UI form posts hit the same middleware-protected API routes; dev bypass covers them in `make demo`; non-dev browser auth is documented as out of scope for v1 (laptop-only, §1)\n\n## Out of Scope\n- CLI confirmation prompts (adm-privileged-confirm)\n- Real IAM policy authoring / CDK roles (foundation-infra)\n\n## Testing\n- Unit: signature verification accept/reject, privileged-tag enforcement, dev bypass gating\n- Integration: mtcctl against test server with dummy creds; tampered signature rejected\n\n## Demo\n`mtcctl status` succeeds with dummy AWS creds; `curl` without signature gets 401 (dev bypass off).",
+      "size": "M",
+      "priority": 1,
+      "phase": 3,
+      "deps": [
+        "admin-api-core",
+        "adm-mtcctl-skeleton"
+      ],
+      "labels": [
+        "api",
+        "cli",
+        "security"
+      ]
+    },
+    {
+      "slug": "adm-privileged-confirm",
+      "title": "Privileged-command confirmation flow (--confirm / --yes)",
+      "description": "## Goal\nImplement the §17.3 authorization UX: privileged mtcctl commands require explicit `--confirm` or an interactive confirmation prompt, skippable with `--yes` for automation.\n\n## Acceptance Criteria\n- Shared helper in `crates/mtcctl` that privileged subcommands call before issuing the API request\n- Behavior: `--confirm` proceeds; interactive TTY prompts y/N; non-TTY without `--confirm`/`--yes` fails with a clear error and non-zero exit\n- `--yes` skips prompting (automation path) and is logged to stderr\n- Prompt text names the operation and its target (e.g. 'initiate failover to us-west-2')\n- Helper adopted by any already-merged privileged command; documented convention for future ones\n\n## Out of Scope\n- Server-side privilege enforcement (adm-auth-middleware)\n- Specific privileged operations themselves (their own tickets)\n\n## Testing\n- Unit: TTY/non-TTY matrix, flag combinations, exit codes\n- E2E: shell script asserts a privileged stub refuses without `--yes` and proceeds with it\n\n## Demo\n`mtcctl failover initiate --to us-west-2` prompts; `--yes` proceeds non-interactively.",
+      "size": "S",
+      "priority": 2,
+      "phase": 3,
+      "deps": [
+        "adm-mtcctl-skeleton"
+      ],
+      "labels": [
+        "cli",
+        "security"
+      ]
+    },
+    {
+      "slug": "adm-sse-stream",
+      "title": "SSE stream: real-time state push into the UI",
+      "description": "## Goal\nImplement the Server-Sent Events stream (§17.4): CA service state changes (new batches, lease events, audit results) push into the UI without polling.\n\n## Acceptance Criteria\n- `crates/admin/src/handlers/sse.rs` exposes an SSE endpoint on the admin app (axum `Sse` responder)\n- Typed event enum (batch-sealed, lease-changed, audit-completed, checkpoint-signed) serialized as named SSE events with JSON data\n- Bridged from the CA service's in-process notification channel via the AppState seam; slow consumers are dropped/lagged without blocking the service (broadcast semantics)\n- Layout wires the htmx SSE extension so subscribed partials refresh on matching events; browser reconnect works (retry + Last-Event-ID tolerated)\n- Heartbeat/keepalive comments prevent idle proxy timeouts\n\n## Out of Scope\n- Producing the events inside the CA service (ca-service epic)\n- Per-page partials consuming specific events (per-operation tickets)\n\n## Testing\n- Unit: event serialization, broadcast lag/drop behavior\n- Integration: test client subscribes, injects events via AppState, asserts stream frames; disconnect/reconnect test\n\n## Demo\n`make demo`, open dashboard, watch batch tiles update live as the sample ACME client issues certs — no page refresh.",
+      "size": "M",
+      "priority": 1,
+      "phase": 3,
+      "deps": [
+        "adm-ui-shell",
+        "EXTERNAL:CA service in-process event notifications for state changes (batches, lease, audit)"
+      ],
+      "labels": [
+        "ui",
+        "api"
+      ]
+    },
+    {
+      "slug": "adm-status-inspect",
+      "title": "Status + log inspect: mtcctl status, log inspect, live dashboard",
+      "description": "## Goal\nShip the Phase 3 'Admin API + CLI + UI for status/inspection' slice: `mtcctl status` (service status, lease, checkpoint) and `mtcctl log inspect` (log size, recent batches), plus a dashboard showing overall health, current state, and growth rate (§17.3, §17.4).\n\n## Acceptance Criteria\n- OpenAPI operations for status and log-state added to `api/admin.openapi.yaml`; `make api-gen` regenerates cleanly (§17.5 flow)\n- Server handlers read live CA state: role, latest checkpoint (age, tree size), recent batch summaries; the lease block renders a 'single-region' placeholder value until lease-epoch-protocol lands (adm-lease-ops replaces it)\n- `mtcctl status` and `mtcctl log inspect` render human tables and stable `--output json|yaml`\n- Dashboard page shows the same fields (parity) plus growth rate computed as entries/hour over the last N batches; auto-refresh via `hx-trigger` polling, with SSE swap-over tracked in adm-sse-stream\n- CLI help text and UI tooltips document each field (§17.5 step 7)\n\n## Out of Scope\n- Batch drill-down (adm-batch-ops)\n- Proof operations (adm-proof-ops)\n- Failover readiness (adm-failover-ops)\n\n## Testing\n- Unit: handlers against memory backend with seeded state\n- Integration: LocalStack-backed service, CLI asserts real values\n- E2E: `tests/e2e/status.sh` drives mtcctl per §19.13\n\n## Demo\n`make demo` then `mtcctl status` and `mtcctl log inspect`; dashboard shows matching numbers.",
+      "size": "M",
+      "priority": 1,
+      "phase": 3,
+      "deps": [
+        "adm-mtcctl-skeleton",
+        "adm-ui-shell",
+        "batch-builder",
+        "checkpoint-signer"
+      ],
+      "labels": [
+        "api",
+        "cli",
+        "ui",
+        "parity"
+      ]
+    },
+    {
+      "slug": "adm-batch-ops",
+      "title": "Batch operations: mtcctl batch list/inspect + Batches UI page",
+      "description": "## Goal\nImplement `mtcctl batch list` and `mtcctl batch inspect` plus the Batches UI view with status and drill-down (§17.3, §17.4 key views).\n\n## Acceptance Criteria\n- OpenAPI operations: list recent batches (paginated, newest first) and get batch by ID with full details (entry count, tree range, checkpoint ref, timestamps, status)\n- Handlers read via the storage facade; work against memory backend and LocalStack\n- `mtcctl batch list` human table + `--output json`; `mtcctl batch inspect <id>` shows full details; unknown ID exits non-zero with a clean error\n- Batches UI page lists batches with status and links to a drill-down partial (hx-get); list auto-updates on batch-sealed SSE events when the stream exists\n- CLI help + UI tooltips documented (§17.5)\n\n## Out of Scope\n- Tree visualization of batch contents (observability epic)\n- Per-cert lookup (adm-cert-ops)\n\n## Testing\n- Unit: handlers with seeded memory-backend batches; pagination edges (empty log, single batch)\n- Integration: against LocalStack-backed facade\n- E2E: `tests/e2e/batch-list.sh` — issue certs, assert new batch appears via CLI\n\n## Demo\n`make demo`, wait one batch cadence, `mtcctl batch list` then `mtcctl batch inspect <id>`; same drill-down in UI.",
+      "size": "M",
+      "priority": 1,
+      "phase": 3,
+      "deps": [
+        "adm-mtcctl-skeleton",
+        "adm-ui-shell",
+        "storage-facade-core"
+      ],
+      "labels": [
+        "api",
+        "cli",
+        "ui",
+        "parity"
+      ]
+    },
+    {
+      "slug": "adm-cert-ops",
+      "title": "Cert operations: mtcctl cert issue/lookup + Cert lookup UI page",
+      "description": "## Goal\nImplement `mtcctl cert issue` (test issuance via the ACME adapter) and `mtcctl cert lookup` (per-cert info by index or PEM), plus the Cert lookup UI view (§17.3, §17.4).\n\n## Acceptance Criteria\n- OpenAPI operations: trigger test issuance for a domain; lookup cert by index or uploaded PEM returning TBSCert contents, batch ref, checkpoint, and current status\n- `mtcctl cert issue --domain X` outputs the issued cert (PEM to stdout); `mtcctl cert lookup --index N` / `--pem FILE` renders details, `--output json` stable for scripting (§19.13 example)\n- Cert lookup UI page: form (index or PEM paste) rendering the same fields (parity)\n- Nonexistent index returns 404 -> non-zero CLI exit with clean message\n- CLI help + UI tooltips documented\n\n## Out of Scope\n- Full forensics fields — served-proof audit trail, pruning status (§20.2; observability epic extends this endpoint)\n- `cert revoke` (adm-revocation-ops)\n- The ACME endpoint itself (ca-service epic)\n\n## Testing\n- Unit: handlers with memory backend; PEM parse failure paths\n- Integration: issue-then-lookup against LocalStack demo stack\n- E2E: `tests/e2e/issuance-and-verification.sh` per §19.13\n\n## Demo\n`mtcctl cert issue --domain test.example.com > /tmp/cert.pem && mtcctl cert lookup --pem /tmp/cert.pem`.",
+      "size": "M",
+      "priority": 1,
+      "phase": 3,
+      "deps": [
+        "adm-mtcctl-skeleton",
+        "adm-ui-shell",
+        "storage-facade-core",
+        "EXTERNAL:ACME endpoint adapter for test issuance (ca-service epic)"
+      ],
+      "labels": [
+        "api",
+        "cli",
+        "ui",
+        "parity"
+      ]
+    },
+    {
+      "slug": "adm-repl",
+      "title": "mtcctl repl: interactive command shell",
+      "description": "## Goal\nImplement `mtcctl repl` (§17.3, §18.6): an interactive, agent-friendly command shell that reuses the existing clap tree — deterministic, scriptable, output captured.\n\n## Acceptance Criteria\n- `mtcctl repl` starts a line-oriented shell; each line is parsed with the same clap definitions as one-shot invocation (no divergent grammar)\n- Works with piped stdin for scripting (reads until EOF, exits 0); errors on a line are reported but do not kill the session in interactive mode\n- Session-scoped settings persist (`--output json` set once applies to subsequent commands)\n- `help`, `exit`/EOF, and command history (interactive TTY only) supported\n- `--output` behavior identical to one-shot mode so captured output is stable\n\n## Out of Scope\n- The evcxr Rust REPL / `make repl` (local-dev-experience epic)\n- Tab-completion of server-side values\n\n## Testing\n- Unit: line parsing reuses clap tree; error-continues semantics\n- E2E: pipe a script of commands into `mtcctl repl` against the demo stack, assert outputs\n\n## Demo\n`echo -e 'status\\nbatch list' | mtcctl repl` prints both results in order.",
+      "size": "S",
+      "priority": 2,
+      "phase": 3,
+      "deps": [
+        "adm-mtcctl-skeleton"
+      ],
+      "labels": [
+        "cli",
+        "dev-experience"
+      ]
+    },
+    {
+      "slug": "adm-parity-check",
+      "title": "Automated CLI/UI parity check over the OpenAPI spec",
+      "description": "## Goal\nEnforce §17.1 full parity mechanically: a CI-run test walks every operation in `api/admin.openapi.yaml` and fails if it lacks a CLI subcommand or a UI surface mapping.\n\n## Acceptance Criteria\n- Convention: each OpenAPI operation carries `x-cli-command` and `x-ui-view` extensions (or an explicit `x-parity-exempt` with justification)\n- Test parses the spec, asserts every `x-cli-command` resolves to a real path in the mtcctl clap tree, and every `x-ui-view` resolves to a registered UI route/template\n- Missing or dangling mappings fail `cargo test` with an actionable message naming the operation\n- Existing operations annotated; check wired into the standard test run (CI required check via existing pipeline)\n- Convention documented for future operation tickets\n\n## Out of Scope\n- Runtime behavioral equivalence between CLI and UI (covered by per-operation E2E)\n- CI infrastructure itself (foundation-infra)\n\n## Testing\n- Unit: the parity test itself, plus negative fixtures (spec with missing annotation fails)\n\n## Demo\nDelete an `x-cli-command` line locally, run `cargo test -p admin parity`, watch it fail with the operation named.",
+      "size": "S",
+      "priority": 2,
+      "phase": 3,
+      "deps": [
+        "adm-mtcctl-skeleton",
+        "adm-ui-shell"
+      ],
+      "labels": [
+        "parity",
+        "testing"
+      ]
+    },
+    {
+      "slug": "adm-dev-clock-endpoint",
+      "title": "Dev-mode fake clock control endpoint on the admin API",
+      "description": "## Goal\nExpose the dev-mode fake clock over the admin API (§18.4): the CA service's injected `Clock` is controllable so `make time-advance` (owned by local-dev-experience) has something to call.\n\n## Acceptance Criteria\n- OpenAPI operations (dev-only tag): get current simulated time; advance by duration (e.g. `days=400`)\n- Handler drives the injected fake `Clock` through the AppState seam; returns new simulated time\n- Compiled/enabled only in dev mode — in non-dev config the routes are absent (404), verified by test\n- `mtcctl` dev subcommand (e.g. `mtcctl dev time-advance --days N`) wired for scriptability, marked dev/test only in help\n- Advancing time emits a log line with old/new time for auditability\n\n## Out of Scope\n- The `Clock` trait and fake-clock implementation (ca-service epic)\n- `make time-advance` wrapper target (local-dev-experience epic)\n\n## Testing\n- Unit: advance math, dev-gating (routes absent outside dev)\n- Integration: advance clock against demo stack, assert service-observed time moved\n\n## Demo\n`mtcctl dev time-advance --days 400 && mtcctl status` shows checkpoint timestamps jumped forward.",
+      "size": "S",
+      "priority": 2,
+      "phase": 3,
+      "deps": [
+        "admin-api-core",
+        "adm-mtcctl-skeleton",
+        "EXTERNAL:injected Clock interface with dev fake clock (ca-service epic)"
+      ],
+      "labels": [
+        "api",
+        "cli",
+        "dev-experience"
+      ]
+    },
+    {
+      "slug": "adm-add-operation-docs",
+      "title": "Docs: adding a new admin operation end-to-end",
+      "description": "## Goal\nDocument the §17.5 workflow so any contributor or agent can add an admin operation: update OpenAPI -> `make api-gen` -> server handler -> clap subcommand -> htmx UI -> E2E test -> help text/tooltips.\n\n## Acceptance Criteria\n- `docs/adding-an-admin-operation.md` walks the seven §17.5 steps using the status/log-inspect operation as the worked example, with real file paths (`api/admin.openapi.yaml`, `crates/admin/src/handlers/`, `crates/mtcctl/`, `crates/admin/templates/`, `tests/e2e/`)\n- Documents the parity annotations (`x-cli-command`, `x-ui-view`) and privileged-op tagging conventions\n- Documents output-format and exit-code conventions for new subcommands, and the CLI-help/UI-tooltip requirement\n- Linked from the repo README/AGENTS context so agents discover it\n\n## Out of Scope\n- General agent harness docs (agent-harnessing epic)\n- Operation-specific runbooks (observability epic)\n\n## Testing\n- Doc-only PR; CI verifies referenced paths exist (simple link/path check script if available)\n\n## Demo\nFollow the doc to add a trivial echo operation on a branch; both `mtcctl` and the UI gain it and the parity check passes.",
+      "size": "S",
+      "priority": 2,
+      "phase": 3,
+      "deps": [
+        "adm-status-inspect",
+        "adm-parity-check"
+      ],
+      "labels": [
+        "docs",
+        "dev-experience"
+      ]
+    },
+    {
+      "slug": "adm-proof-ops",
+      "title": "Proof operations: mtcctl log inclusion/consistency/verify + UI",
+      "description": "## Goal\nShip the Phase 4 'CLI commands for proof inspection and verification' (§17.3): `mtcctl log inclusion`, `log consistency`, and `log verify`, with a matching UI form for parity.\n\n## Acceptance Criteria\n- OpenAPI operations: inclusion proof for an index, consistency proof between two sizes, verify-cert-against-log; handlers delegate to read-path proof generation and the verification library\n- `mtcctl log inclusion --index N` prints the proof and local verification result; `--output json` includes `verified: true|false` (§19.13 example shape)\n- `mtcctl log consistency --from A --to B` generates and verifies; invalid ranges (A>B, B>tree size) fail cleanly with non-zero exit\n- `mtcctl log verify --pem FILE` verifies a certificate end-to-end against the log\n- UI page/partial for proof queries showing verification outcome (parity); CLI help + tooltips documented\n\n## Out of Scope\n- Proof generation internals and the verification library (read-path epic)\n- Self-auditor consistency sweeps (adm-audit-ops / observability)\n\n## Testing\n- Unit: handler validation edges against memory backend\n- Integration: proofs against LocalStack demo log\n- E2E: extend `tests/e2e/issuance-and-verification.sh` — issue, then verify inclusion via CLI\n\n## Demo\n`mtcctl cert issue --domain d.test > c.pem && mtcctl log verify --pem c.pem --output json | jq .verified` prints true.",
+      "size": "M",
+      "priority": 1,
+      "phase": 4,
+      "deps": [
+        "adm-mtcctl-skeleton",
+        "adm-ui-shell",
+        "EXTERNAL:verification library + inclusion/consistency proof generation (read-path epic)"
+      ],
+      "labels": [
+        "api",
+        "cli",
+        "ui",
+        "parity"
+      ]
+    },
+    {
+      "slug": "adm-lease-ops",
+      "title": "Lease operations: mtcctl lease show/renew + Lease UI page",
+      "description": "## Goal\nExpose lease state over the admin surface (§17.3, §17.4): `mtcctl lease show` (current holder, expiry) and `mtcctl lease renew` (force renewal, dev/test only), plus the Lease UI view with history and force-renew.\n\n## Acceptance Criteria\n- OpenAPI operations: get lease state (holder region, epoch, acquired/expiry times, recent transitions) and force-renew (tagged dev/test-only, absent or 403 outside dev mode)\n- Handlers read from the lease/epoch protocol implementation; no lease logic duplicated in the admin layer\n- `mtcctl lease show` human + `--output json`; `mtcctl lease renew` clearly marked dev/test in help and refuses outside dev mode\n- Lease UI page: current holder, expiry countdown, transition history, force-renew button (dev mode); updates on lease-changed SSE events\n- CLI help + UI tooltips documented\n\n## Out of Scope\n- Lease/epoch protocol internals and Kani harnesses (multi-region epic)\n- Failover commands (adm-failover-ops)\n\n## Testing\n- Unit: handlers against memory-backend lease state; dev-gating of renew\n- Integration: `make demo-multiregion` stack — show reflects real holder; renew extends expiry\n- E2E: shell script asserts holder/epoch fields present via CLI\n\n## Demo\n`make demo-multiregion` then `mtcctl lease show`; watch expiry move after `mtcctl lease renew`.",
+      "size": "M",
+      "priority": 1,
+      "phase": 5,
+      "deps": [
+        "adm-mtcctl-skeleton",
+        "adm-ui-shell",
+        "lease-epoch-protocol"
+      ],
+      "labels": [
+        "api",
+        "cli",
+        "ui",
+        "parity"
+      ]
+    },
+    {
+      "slug": "adm-failover-ops",
+      "title": "Failover exposure: mtcctl failover status/initiate + UI",
+      "description": "## Goal\nExpose manual failover on the admin surface (§13.2, §17.3): `mtcctl failover status` (readiness assessment) and `mtcctl failover initiate` (privileged), plus UI equivalents. Orchestration internals belong to multi-region; this ticket is the API/CLI/UI exposure.\n\n## Acceptance Criteria\n- OpenAPI operations: failover readiness (replication lag, standby health, prerequisites) and initiate (privileged; requires `--to <region>` and `--reason`, per §13.2 justification + incident ref)\n- Handlers delegate to the multi-region failover orchestrator; admin layer holds no promotion logic\n- `mtcctl failover initiate --to us-west-2 --reason \"...\"` goes through the confirmation flow (adm-privileged-confirm) and streams/echoes step progress from the idempotent promotion procedure (§13.3)\n- Initiate tagged `x-privileged`; request without elevated principal gets 403 (adm-auth-middleware enforcement, covered by test)\n- `mtcctl failover status --output json` stable for runbook automation\n- Failover UI panel: readiness display + initiate form with confirmation (parity with §13.2 'CLI or admin UI')\n\n## Out of Scope\n- Promotion procedure, readiness computation, standby mode (multi-region epic)\n- Automated failover (non-goal, §1)\n\n## Testing\n- Unit: handler delegation, privileged gating, required-args validation\n- Integration: `make demo-multiregion` — initiate against simulated partition\n- E2E: chaos-style shell script partitioning a region then failing over via CLI (§18.3)\n\n## Demo\n`make demo-multiregion && make partition-region us-east-1 && mtcctl failover initiate --to us-west-2 --reason drill --yes`.",
+      "size": "M",
+      "priority": 1,
+      "phase": 5,
+      "deps": [
+        "adm-privileged-confirm",
+        "adm-auth-middleware",
+        "adm-ui-shell",
+        "EXTERNAL:manual failover orchestration + readiness assessment (multi-region epic)"
+      ],
+      "labels": [
+        "api",
+        "cli",
+        "ui",
+        "parity"
+      ]
+    },
+    {
+      "slug": "adm-audit-ops",
+      "title": "Audit operations: mtcctl audit run/history/verify + Audit UI page",
+      "description": "## Goal\nExpose the self-auditor on the admin surface (§17.3, §17.4): `mtcctl audit run` (on-demand trigger), `audit history`, and `audit verify` (independent log-consistency verification), plus the Audit UI view. Self-auditor exposure is part of the cosigner-free trust story (§25.8).\n\n## Acceptance Criteria\n- OpenAPI operations: trigger audit run, list audit history (result, timestamp, checked range), run independent consistency verification\n- Handlers delegate to the self-auditor service; admin layer performs no auditing itself\n- `mtcctl audit run` returns run ID and outcome (or polls to completion with `--wait`); `audit history --output json` stable; `audit verify` exits non-zero on inconsistency (usable in scripts/CI)\n- Audit UI page: history table with pass/fail badges, manual-run button; updates on audit-completed SSE events\n- CLI help + UI tooltips documented\n\n## Out of Scope\n- Self-auditor Lambda/implementation and scheduling (observability epic)\n- Compliance reports (adm-report-ops)\n\n## Testing\n- Unit: handlers against stubbed auditor in memory backend\n- Integration: demo stack — trigger run, see result in history\n- E2E: `tests/e2e/audit.sh` runs audit via CLI and asserts pass\n\n## Demo\n`make demo` then `mtcctl audit run --wait && mtcctl audit history`; same in the Audit page.",
+      "size": "M",
+      "priority": 1,
+      "phase": 6,
+      "deps": [
+        "adm-mtcctl-skeleton",
+        "adm-ui-shell",
+        "EXTERNAL:self-auditor service with on-demand trigger + history store (observability epic)"
+      ],
+      "labels": [
+        "api",
+        "cli",
+        "ui",
+        "parity"
+      ]
+    },
+    {
+      "slug": "adm-report-ops",
+      "title": "Report operations: mtcctl report issuance/revocation/compliance + Reports UI",
+      "description": "## Goal\nExpose report generation on the admin surface (§17.3, §20.3: reports signed by a separate reporting key, generated via `mtcctl report`): issuance log report, revocation report, and compliance bundle, plus the Reports UI view.\n\n## Acceptance Criteria\n- OpenAPI operations: generate issuance, revocation, and compliance reports with time-range parameters; responses include the report artifact (or a storage ref) and its signature\n- `mtcctl report issuance|revocation|compliance --from --to` writes the report to stdout or `--out FILE`; `--output json` wraps with metadata (range, signature, generated-at)\n- JSON output includes the detached signature (base64) and reporting key ID; E2E asserts both fields are non-empty\n- Reports UI page: form to request each report type and download the result (parity)\n- CLI help + UI tooltips documented\n\n## Out of Scope\n- Report content assembly and reporting-key signing internals (observability epic)\n- Audit runs (adm-audit-ops)\n\n## Testing\n- Unit: handler parameter validation, empty-range behavior\n- Integration: generate reports against demo stack with issued+revoked certs\n- E2E: shell script generates compliance bundle and asserts signature + key ID fields present\n\n## Demo\n`mtcctl report compliance --from 2026-01-01 --to 2026-07-01 --out bundle.tar.gz` then download the same from the Reports page.",
+      "size": "M",
+      "priority": 2,
+      "phase": 6,
+      "deps": [
+        "adm-mtcctl-skeleton",
+        "adm-ui-shell",
+        "EXTERNAL:report generation + reporting-key signing (observability epic)"
+      ],
+      "labels": [
+        "api",
+        "cli",
+        "ui",
+        "parity"
+      ]
+    },
+    {
+      "slug": "adm-prune-ops",
+      "title": "Prune operations: mtcctl prune status/run + UI panel",
+      "description": "## Goal\nExpose pruning on the admin surface (§17.3, §15): `mtcctl prune status` (watermark and pending work) and `mtcctl prune run` (trigger workflow), plus a UI panel for parity.\n\n## Acceptance Criteria\n- OpenAPI operations: pruning status (watermark, eligible ranges, last run) and trigger-run; handlers are thin proxies to the pruning workflow interface\n- `mtcctl prune status --output json` stable; `mtcctl prune run` returns an execution ID and non-zero exit on rejected trigger\n- UI panel on an appropriate page shows watermark + pending work with a run button\n- CLI help + UI tooltips documented\n\n## Out of Scope\n- Pruning Step Functions workflow and retention enforcement (pruning epic)\n- Revocation commands (adm-revocation-ops)\n\n## Testing\n- Unit: handlers against stubbed pruning interface (memory backend)\n- Integration: trigger against LocalStack demo, watermark advances\n- E2E: `tests/e2e/prune.sh` — load fixture, run prune via CLI, assert watermark moved\n\n## Demo\n`make fixture-load name=million-entries && mtcctl prune run && mtcctl prune status`.",
+      "size": "M",
+      "priority": 2,
+      "phase": 7,
+      "deps": [
+        "adm-mtcctl-skeleton",
+        "adm-ui-shell",
+        "EXTERNAL:pruning workflow status/trigger interface (pruning epic)"
+      ],
+      "labels": [
+        "api",
+        "cli",
+        "ui",
+        "parity"
+      ]
+    },
+    {
+      "slug": "adm-revocation-ops",
+      "title": "Revocation operations: mtcctl revocation list/add/distribute, cert revoke + UI",
+      "description": "## Goal\nExpose revocation on the admin surface (§17.3, §16): `mtcctl revocation list`, `revocation add` (privileged), `revocation distribute` (emergency redistribution), and `mtcctl cert revoke` (privileged single-cert path), plus UI for parity.\n\n## Acceptance Criteria\n- OpenAPI operations: get current revocation list, add range (privileged), trigger emergency distribution, revoke single cert by index (privileged)\n- Handlers delegate to the revocation service; privileged ops tagged `x-privileged` and enforced server-side (403 without elevated principal, via adm-auth-middleware)\n- `mtcctl revocation add --range A-B` and `mtcctl cert revoke --index N` require the confirmation flow; `revocation list --output json` stable\n- `mtcctl revocation distribute` triggers the §16.3 emergency flow and reports distribution outcome\n- Revocation UI: list view with add-range and distribute actions behind confirmation (parity)\n- CLI help + UI tooltips documented\n\n## Out of Scope\n- Revocation Lambda, list format, distribution mechanisms (revocation epic)\n- Revocation report (adm-report-ops)\n\n## Testing\n- Unit: handler validation (bad ranges, overlaps), privileged gating\n- Integration: revoke-then-list against demo stack\n- E2E: `tests/e2e/revocation.sh` — issue, revoke via CLI, `cert lookup` shows revoked (§19.1 demo scenario)\n\n## Demo\n`mtcctl cert revoke --index 5 --yes && mtcctl revocation list` shows the entry; UI matches.",
+      "size": "M",
+      "priority": 2,
+      "phase": 7,
+      "deps": [
+        "adm-privileged-confirm",
+        "adm-auth-middleware",
+        "adm-ui-shell",
+        "EXTERNAL:revocation service — list storage, add, distribution trigger (revocation epic)"
+      ],
+      "labels": [
+        "api",
+        "cli",
+        "ui",
+        "parity"
+      ]
+    },
+    {
+      "slug": "adm-adapter-ops",
+      "title": "Adapter operations: mtcctl adapter list/status/pause + Adapters UI page",
+      "description": "## Goal\nExpose intake adapters on the admin surface (§17.3, §17.4, §10): `mtcctl adapter list`, `adapter status` (per-adapter health and intake rate), and `adapter pause` (privileged), plus the Adapters UI view.\n\n## Acceptance Criteria\n- OpenAPI operations: list configured adapters, per-adapter status (health, intake rate, last entry), pause/resume (privileged)\n- Handlers read from the adapter health/observability surface behind the EntryIntake seam; works with only the ACME adapter configured (v1 reality, §25.9)\n- `mtcctl adapter status --output json` stable; `adapter pause <name>` requires confirmation flow and reflects paused state in subsequent status\n- Pause/resume tagged `x-privileged` and enforced server-side (403 without elevated principal, via adm-auth-middleware)\n- Adapters UI page: per-adapter health/intake tiles with pause/resume controls (parity)\n- CLI help + UI tooltips documented\n\n## Out of Scope\n- Adapter SDK, AWS Private CA adapter, health-surface internals (adapter-pattern epic)\n- EntryIntake trait itself (ca-service epic)\n\n## Testing\n- Unit: handlers against stubbed adapter registry (memory backend); pause state machine edges\n- Integration: pause ACME adapter in demo stack, assert intake stops\n- E2E: shell script pauses/resumes via CLI and asserts status transitions\n\n## Demo\n`mtcctl adapter pause acme --yes && mtcctl adapter status` shows paused; sample issuance loop stalls, then resume.",
+      "size": "M",
+      "priority": 3,
+      "phase": 9,
+      "deps": [
+        "adm-privileged-confirm",
+        "adm-auth-middleware",
+        "adm-ui-shell",
+        "EXTERNAL:adapter health/observability surface (adapter-pattern epic)"
+      ],
+      "labels": [
+        "api",
+        "cli",
+        "ui",
+        "parity",
+        "post-v1"
+      ]
+    }
+  ]
+}

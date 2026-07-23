@@ -1,0 +1,234 @@
+{
+  "epic": {
+    "slug": "operational-tooling",
+    "title": "Operational Tooling",
+    "description": "Operational tooling for the MTC CA: the full runbook library mandated by §21.2 (with template, structure linting, and drill validation against the local multi-region simulation), capacity planning documentation and calculator tooling per §21.1, the Phase 8 security review checklist and its execution, triage/trending tooling for chaos and soak results (§19.7/§19.9), and the final documentation polish pass. Failover/promotion CLI implementation and the chaos harness itself live in the multi-region and testing-infra epics respectively; this epic owns the operator-facing documents and analysis tooling layered on top of them."
+  },
+  "tickets": [
+    {
+      "slug": "ops-runbook-framework",
+      "title": "Runbook framework: template, postmortem template, index, structure lint",
+      "description": "## Goal\nEstablish `docs/runbooks/` per §21.2: a runbook template with the five mandated sections (Detection, Initial assessment, Mitigation steps, Recovery procedure, Postmortem template), a shared postmortem template, an index page listing the eight required runbooks, and a lint script that enforces template structure.\n\n## Acceptance Criteria\n- `docs/runbooks/TEMPLATE.md` contains the five §21.2 sections with guidance comments\n- `docs/runbooks/POSTMORTEM.md` template exists (timeline, impact, root cause, action items)\n- `docs/runbooks/README.md` indexes all eight required runbooks (§21.2) with status (stub/complete) and maps each to the alerts (§20.1) and chaos scenarios (§19.9) that exercise it\n- `scripts/lint-runbooks.sh` (or small Rust/shell tool) fails when a runbook is missing a required section; `make lint-runbooks` target added\n- Lint script has tests covering pass/fail fixtures\n\n## Out of Scope\n- Content of individual runbooks (separate tickets)\n- Wiring lint into CI (ops-docs-ci-quality-gates)\n\n## Testing\n- Unit tests for the lint script against good/bad fixture runbooks (§19.1); no property/fuzz/Kani/Loom applicable\n\n## Demo\nAfter merge: `make lint-runbooks` passes; deliberately delete a section from a stub and see it fail.",
+      "size": "S",
+      "priority": 1,
+      "phase": 6,
+      "deps": [],
+      "labels": ["runbook", "docs", "tooling"]
+    },
+    {
+      "slug": "ops-runbook-primary-failure",
+      "title": "Runbook: primary region failure and manual failover",
+      "description": "## Goal\nWrite `docs/runbooks/primary-failure.md` covering detection through promotion for a lost primary region, per §13.1–13.3 and §21.2.\n\n## Acceptance Criteria\n- Detection section lists the §13.1 signals: Route 53 health check failures, lease renewal metric stall, checkpoint cadence alarm, standby lease-expiry observation\n- Assessment section includes the §13.2 preconditions checklist: primary unreachable, standby caught up (latest checkpoint replicated, S3 CRR current), freshest standby selected\n- Mitigation walks `mtcctl failover initiate --to <region> --reason <...>` and annotates each step of the idempotent promotion procedure (§13.3): checkpoint verification, tile snapshot consistency / CRR wait, abandoning in-flight batches, lease claim + epoch increment, gap-fill with null_entry\n- Recovery section states RTO/RPO expectations (§13.5: RPO zero for committed work, RTO 5–15 min) and verification steps (`/health/primary`, self-auditor green)\n- Runbook validated by a documented drill transcript against the local multi-region sim (§18.3): `make demo-multiregion`, `make partition-region us-east-1`, follow the runbook, chaos-primary-loss pass criterion holds (§19.9)\n- Passes `make lint-runbooks`\n\n## Out of Scope\n- Failover CLI implementation (multi-region epic); old-primary recovery/failback (ops-runbook-region-recovery)\n\n## Testing\n- Doc structure lint (unit-level); E2E-style manual drill via local sim (§18.3, §19.13)\n\n## Demo\nAfter merge: run the drill above end-to-end following only the runbook text.",
+      "size": "S",
+      "priority": 1,
+      "phase": 6,
+      "deps": [
+        "ops-runbook-framework",
+        "EXTERNAL:mtcctl failover initiate command (multi-region epic)",
+        "EXTERNAL:local multi-region sim with make demo-multiregion/partition-region (dev-experience epic, §18.3)"
+      ],
+      "labels": ["runbook", "docs", "failover"]
+    },
+    {
+      "slug": "ops-runbook-region-recovery",
+      "title": "Runbook: old primary recovery and failback",
+      "description": "## Goal\nWrite `docs/runbooks/region-recovery.md` covering the return of a failed primary (§13.4) and deliberate failback to the original region.\n\n## Acceptance Criteria\n- Documents the §13.4 stand-down invariant: returning region reads lease, sees higher epoch + different holder, stands down to read-only; explains why split-brain is impossible (all writes conditional on epoch, §8.3)\n- Verification steps: `/health/primary` returns false on old primary, standby-mode metrics green, no stale-epoch write errors in logs\n- Failback section: treat failback as a fresh manual failover (cross-reference primary-failure runbook), including CRR catch-up preconditions\n- Includes drill transcript against local sim: partition primary, promote standby, heal partition, observe stand-down (chaos-old-primary-recovery pass criterion, §19.9)\n- Passes `make lint-runbooks`\n\n## Out of Scope\n- Promotion procedure details (primary-failure runbook)\n- Standby read-only mode implementation (multi-region epic)\n\n## Testing\n- Doc structure lint; manual E2E drill via `make demo-multiregion` (§18.3)\n\n## Demo\nAfter merge: heal a partitioned region in the local sim and confirm stand-down following only the runbook.",
+      "size": "S",
+      "priority": 2,
+      "phase": 6,
+      "deps": [
+        "ops-runbook-primary-failure"
+      ],
+      "labels": ["runbook", "docs", "failover"]
+    },
+    {
+      "slug": "ops-runbook-hsm-unavailability",
+      "title": "Runbook: HSM unavailability",
+      "description": "## Goal\nWrite `docs/runbooks/hsm-unavailability.md` for checkpoint-signing outages, per §14 and §21.2.\n\n## Acceptance Criteria\n- Detection: checkpoint cadence alarm, HSM error-rate metrics, batch retry alerts (§20.1); distinguishes transient errors from full outage and connection-pool exhaustion (§19.7)\n- Assessment: is this one region (consider failover, cross-ref primary-failure runbook) or both (issuance pause)? References cross-region key management model (§14.2)\n- Mitigation: expected system behavior per chaos-hsm-down (§19.9) — batch retries, alerts, eventual stand-down; operator actions for pausing intake and communicating issuance latency breach\n- Recovery: resume criteria, backlog drain expectations at capacity numbers from §21.1 (~40 signings/hour at 10K certs/hour), post-recovery self-auditor check\n- Drill transcript using the SoftHSM dev backend (stop the SoftHSM/PKCS#11 provider mid-batch in the local env)\n- Passes `make lint-runbooks`\n\n## Out of Scope\n- HSM client retry logic (ca-service epic); key compromise handling (ops-runbook-key-compromise)\n\n## Testing\n- Doc structure lint; manual E2E drill in local env (§18)\n\n## Demo\nAfter merge: kill SoftHSM mid-demo, follow the runbook, restore signing.",
+      "size": "S",
+      "priority": 1,
+      "phase": 6,
+      "deps": [
+        "ops-runbook-framework",
+        "checkpoint-signer"
+      ],
+      "labels": ["runbook", "docs"]
+    },
+    {
+      "slug": "ops-runbook-crr-stall",
+      "title": "Runbook: S3 cross-region replication stall",
+      "description": "## Goal\nWrite `docs/runbooks/crr-stall.md` for stalled S3 CRR / DDB Global Tables lag, per §21.2.\n\n## Acceptance Criteria\n- Detection: replication lag metrics/alarms (§20.1), standby freshness checks\n- Assessment: quantify lag; decision table for whether failover is currently safe (per §13.2 the CLI blocks promotion until standby caught up; per chaos-crr-stall §19.9 failover must wait for catch-up)\n- Mitigation: steps for the stalled-CRR-plus-attempted-promotion case (§19.8 adversarial scenario) — explicitly forbid forcing promotion past the consistency check; escalation options if the primary is also down (RTO tradeoff per §13.5)\n- Recovery: confirm replication current, run self-auditor, verify tile snapshot consistency matches latest checkpoint (§13.3 step 1)\n- Drill transcript using the local sim's configurable CRR lag (§18.3)\n- Passes `make lint-runbooks`\n\n## Out of Scope\n- CRR lag metric implementation (observability epic); CRR simulation (dev-experience/testing epics)\n\n## Testing\n- Doc structure lint; manual E2E drill via `make demo-multiregion` with injected lag (§18.3)\n\n## Demo\nAfter merge: inject 30-min simulated CRR delay, attempt failover, observe the wait, follow runbook to resolution.",
+      "size": "S",
+      "priority": 2,
+      "phase": 6,
+      "deps": [
+        "ops-runbook-framework",
+        "EXTERNAL:configurable CRR lag in local multi-region sim (dev-experience/testing-infra)"
+      ],
+      "labels": ["runbook", "docs"]
+    },
+    {
+      "slug": "ops-runbook-self-auditor-anomaly",
+      "title": "Runbook: self-auditor anomaly",
+      "description": "## Goal\nWrite `docs/runbooks/self-auditor-anomaly.md` for handling a red self-auditor result, per §21.2. The self-auditor is the substitute for external transparency in this cosigner-free deployment (§25.8), so an anomaly is a potential integrity incident.\n\n## Acceptance Criteria\n- Detection: self-auditor alarm, `/health/audit` endpoint (§20.5)\n- Assessment: classify anomaly type — inclusion proof failure, checkpoint signature mismatch, tree inconsistency, replayed/stale checkpoint (§19.8) — with severity for each and which are stop-the-world\n- Mitigation: when to halt issuance, when to treat as suspected key compromise (cross-ref ops-runbook-key-compromise), evidence-preservation steps (snapshot relevant tiles/checkpoints before any remediation; Object Lock means originals are immutable, §15.3)\n- Recovery: re-run audit, forensic verification via per-cert forensics tooling (§20.2), criteria for resuming issuance\n- Includes escalation to postmortem template for any confirmed integrity violation\n- Passes `make lint-runbooks`\n\n## Out of Scope\n- Self-auditor Lambda implementation (observability epic)\n\n## Testing\n- Doc structure lint; manual drill by feeding the local self-auditor a corrupted tile fixture (§18.5)\n\n## Demo\nAfter merge: corrupt a tile in the local env, watch the auditor go red, follow the runbook.",
+      "size": "S",
+      "priority": 1,
+      "phase": 6,
+      "deps": [
+        "ops-runbook-framework",
+        "EXTERNAL:self-auditor Lambda (observability epic)"
+      ],
+      "labels": ["runbook", "docs"]
+    },
+    {
+      "slug": "ops-runbook-emergency-revocation",
+      "title": "Runbook: emergency revocation",
+      "description": "## Goal\nWrite `docs/runbooks/emergency-revocation.md` operationalizing the §16.3 emergency revocation flow, per §21.2.\n\n## Acceptance Criteria\n- Detection/trigger section: what qualifies as an emergency revocation (compromised subscriber key, misissuance found by forensics §20.2)\n- Procedure annotates each §16.3 step: operator initiation via CLI/UI with justification + incident ref, revocation-processor Lambda generates list, HSM signs, deterministic-key S3 write, atomic DDB latest-revocation pointer update, push-triggered refresh\n- Verification: confirm relying parties see the new list (distribution mechanisms §16.2), check revocation log report (§20.3)\n- Includes rollback guidance (revocations are append-only in spirit; document un-revocation policy explicitly)\n- Time-bound targets stated (end-to-end propagation expectation) and postmortem requirement for every emergency revocation\n- Drill transcript: revoke a demo cert in the local env end-to-end\n- Passes `make lint-runbooks`\n\n## Out of Scope\n- Revocation Lambda and distribution implementation (revocation epic); key compromise response (ops-runbook-key-compromise)\n\n## Testing\n- Doc structure lint; manual E2E drill via CLI in local env (§19.13)\n\n## Demo\nAfter merge: `make demo`, issue a cert, revoke it following only the runbook, verify a relying party rejects it.",
+      "size": "S",
+      "priority": 1,
+      "phase": 7,
+      "deps": [
+        "ops-runbook-framework",
+        "EXTERNAL:revocation processor + distribution (revocation epic)"
+      ],
+      "labels": ["runbook", "docs", "revocation"]
+    },
+    {
+      "slug": "ops-runbook-pruning-failure",
+      "title": "Runbook: pruning failure",
+      "description": "## Goal\nWrite `docs/runbooks/pruning-failure.md` for failures in the pruning Step Functions workflow, per §15 and §21.2.\n\n## Acceptance Criteria\n- Detection: pruning workflow failure alarms, stuck-execution alerts (§20.1), storage growth trending beyond plan (§21.1 rates)\n- Assessment: classify — transient AWS error, retention-policy violation attempt (Object Lock denial, §15.3), or logic error deleting wrong ranges\n- Mitigation: safe-to-retry guidance (workflow idempotency expectations), when to pause pruning entirely; explicit warning that Object Lock denials are the safety system working, not an error to bypass\n- Recovery: resume workflow, reconcile pruning log report (§20.3) against expected pruned ranges, run self-auditor to confirm surviving tree integrity\n- Includes storage-headroom guidance: how long the system can run with pruning disabled before hitting capacity concerns\n- Passes `make lint-runbooks`\n\n## Out of Scope\n- Pruning workflow implementation (pruning epic)\n\n## Testing\n- Doc structure lint; manual drill by failing the pruning workflow mid-run in LocalStack with `make time-advance days=400` (§18.4)\n\n## Demo\nAfter merge: time-advance past retention in the local env, break the pruning workflow, recover following the runbook.",
+      "size": "S",
+      "priority": 2,
+      "phase": 7,
+      "deps": [
+        "ops-runbook-framework",
+        "EXTERNAL:pruning Step Functions workflow (pruning epic)"
+      ],
+      "labels": ["runbook", "docs", "pruning"]
+    },
+    {
+      "slug": "ops-runbook-key-compromise",
+      "title": "Runbook: suspected key compromise",
+      "description": "## Goal\nWrite `docs/runbooks/key-compromise.md` for suspected compromise of CA signing keys, per §21.2 and threat model §3.\n\n## Acceptance Criteria\n- Detection: wrong-signature anomalies from self-auditor, unexplained checkpoints, HSM audit trail discrepancies (§19.8 covers wrong signatures from a \"compromised\" HSM)\n- Assessment: scope determination — which key (checkpoint signing vs reporting key §20.3), which regions given the cross-region key management model (§14.2), blast radius in time (which batches signed since last known-good audit)\n- Mitigation: halt issuance in all regions, initiate emergency revocation (cross-ref ops-runbook-emergency-revocation) for affected ranges, preserve HSM audit logs and key ceremony records (§20.3)\n- Recovery: key rotation ceremony steps referencing §14.1–14.2, re-establishing relying-party trust in the new key, restart criteria\n- States explicitly what is unrecoverable (trust in checkpoints signed during the compromise window) and how the append-only log bounds the damage\n- Passes `make lint-runbooks`\n\n## Out of Scope\n- Key rotation tooling implementation; HSM integration code (ca-service epic)\n\n## Testing\n- Doc structure lint; tabletop-exercise transcript (this scenario is not fully drillable locally; document the tabletop per §19.8 red-team scenarios)\n\n## Demo\nAfter merge: tabletop walkthrough recorded in the runbook appendix; `make lint-runbooks` green.",
+      "size": "S",
+      "priority": 1,
+      "phase": 7,
+      "deps": [
+        "ops-runbook-emergency-revocation"
+      ],
+      "labels": ["runbook", "docs", "security"]
+    },
+    {
+      "slug": "ops-runbook-adapter-flood",
+      "title": "Runbook: adapter flood",
+      "description": "## Goal\nWrite `docs/runbooks/adapter-flood.md` for an intake adapter flooding the issuance pipeline, per §21.2 and the adapter model in §10.\n\n## Acceptance Criteria\n- Detection: per-adapter intake rate metrics and adapter activity reporting (§20.3), queue depth / backpressure alarms, issuance latency SLO burn (§20.1)\n- Assessment: legitimate burst vs misbehaving adapter vs abuse; compare observed rate against capacity plan figures (§21.1: 10K certs/hour baseline)\n- Mitigation: per-adapter throttle/disable steps via admin surface (`mtcctl adapter pause`), expected backpressure behavior per chaos-adapter-flood pass criterion (§19.9: backpressure works, no entries lost)\n- Recovery: drain backlog, verify no accepted entries were dropped (append-only invariant §11.2), re-enable adapter with rate limit\n- Drill transcript: flood the ACME adapter in the local env and follow the runbook\n- Passes `make lint-runbooks`\n\n## Out of Scope\n- Backpressure/rate-limit implementation (ca-service epic); chaos-adapter-flood scenario harness (testing-infra)\n\n## Testing\n- Doc structure lint; manual E2E drill via local load generation (§18)\n\n## Demo\nAfter merge: run a local flood, throttle the adapter following only the runbook, confirm zero lost entries via self-auditor.",
+      "size": "S",
+      "priority": 2,
+      "phase": 6,
+      "deps": [
+        "ops-runbook-framework",
+        "entry-intake-trait"
+      ],
+      "labels": ["runbook", "docs"]
+    },
+    {
+      "slug": "ops-capacity-plan-doc",
+      "title": "Capacity planning document",
+      "description": "## Goal\nExpand §21.1 into `docs/operations/capacity.md`: a parameterized capacity model for the whole system, distinct from the live capacity-prediction metrics owned by observability (§20.4).\n\n## Acceptance Criteria\n- Derives all §21.1 rates from first principles: certs/hour, batch size (256), and batch interval → batches/hour, HSM signings/hour, DDB commit transactions/hour, S3 entry writes/hour, S3 tile writes/hour\n- Documents the binding constraints and headroom at 1x/10x/100x the 10K certs/hour baseline: HSM signing throughput (§14.3), DDB transaction limits, S3 request rates, tree growth and tile storage over retention window (§15)\n- States scaling levers per bottleneck (batch size vs interval tradeoff, issuance latency impact)\n- Cost notes cross-referenced to §5 (modeled only — no real AWS spend per §1 non-goals)\n- Reviewed against actual constants in the codebase (batch size, cadence) with source links so drift is detectable\n\n## Out of Scope\n- Calculator tooling (ops-capacity-calculator); forward-looking metrics (§20.4, observability epic)\n\n## Testing\n- Doc lint only; numeric examples in the doc are re-derived by the calculator's tests once ops-capacity-calculator lands\n\n## Demo\nAfter merge: doc renders in repo; worked example reproduces every §21.1 figure.",
+      "size": "S",
+      "priority": 2,
+      "phase": 8,
+      "deps": [],
+      "labels": ["docs", "capacity"]
+    },
+    {
+      "slug": "ops-capacity-calculator",
+      "title": "mtcctl ops capacity calculator",
+      "description": "## Goal\nImplement `mtcctl ops capacity` computing the §21.1 capacity model from input parameters, so operators and CI can check headroom without spreadsheet math.\n\n## Acceptance Criteria\n- `mtcctl ops capacity --certs-per-hour N [--batch-size B] [--batch-interval S]` prints derived rates: batches/hour, HSM signings/hour, DDB txns/hour, S3 entry and tile writes/hour, projected storage growth/day\n- Flags any derived rate exceeding configured limits (HSM throughput §14.3, service quota constants) with nonzero exit code; `--format json` for scripting\n- Defaults reproduce the §21.1 worked example exactly (10K certs/hour → ~40 batches/hour etc.), asserted in a unit test so doc and code cannot drift\n- Unit tests for boundary cases (rates below one batch/hour, batch-size 1, zero input rejected via newtype validation per §22.1)\n- Property test (`proptest`): derived rates are monotonic in input rate; entry writes/hour equals input rate\n\n## Out of Scope\n- Live metrics-based prediction (§20.4, observability); capacity doc prose (ops-capacity-plan-doc)\n\n## Testing\n- Unit, property (§19.1, §19.2); E2E via CLI invocation in a smoke test (§19.13); no integration/fuzz/Kani/Loom\n\n## Demo\nAfter merge: `mtcctl ops capacity --certs-per-hour 10000` reproduces §21.1; `--certs-per-hour 10000000` shows the HSM bottleneck flagged.",
+      "size": "S",
+      "priority": 2,
+      "phase": 8,
+      "deps": [
+        "ops-capacity-plan-doc",
+        "EXTERNAL:mtcctl CLI scaffolding (clap v4, foundation-infra Phase 0)"
+      ],
+      "labels": ["tooling", "cli", "capacity"]
+    },
+    {
+      "slug": "ops-security-review-checklist",
+      "title": "Security review checklist",
+      "description": "## Goal\nProduce the Phase 8 (§24) security review checklist as a structured, trackable document at `docs/security/review-checklist.md`, derived from the threat model (§3) and the system's stated invariants.\n\n## Acceptance Criteria\n- Checklist items grouped by area: key handling and HSM boundary (§14, incl. FIPS boundary §14.4), append-only/integrity invariants (§11.2, §8 S3 invariants), epoch-conditional writes and split-brain (§8.3, §13.4), retention/Object Lock (§15.3), revocation path (§16), admin surface authn/authz and audit trail (§17, §20.3), supply chain (cargo-audit/cargo-deny status §22.13), input parsing hardening (fuzz coverage §19.3)\n- Every §19.8 adversarial scenario appears as a checklist item with a pointer to the test that covers it (or an explicit gap marker)\n- Each item has: id, statement, verification method (test/code inspection/config check), status field (unreviewed/pass/finding/N.A.)\n- Machine-checkable format (front-matter or table) with a lint script asserting every item has a status; `make lint-security-checklist` target\n- Explicitly scopes out items irrelevant to the non-production stance (§1 non-goals) with rationale rather than silently omitting them\n\n## Out of Scope\n- Performing the review (ops-security-review-v1); fixing findings\n\n## Testing\n- Unit test for the checklist lint script; doc lint. No property/fuzz/Kani/Loom\n\n## Demo\nAfter merge: `make lint-security-checklist` green; checklist shows full item inventory with statuses all `unreviewed`.",
+      "size": "S",
+      "priority": 1,
+      "phase": 8,
+      "deps": [],
+      "labels": ["security", "docs"]
+    },
+    {
+      "slug": "ops-security-review-v1",
+      "title": "Execute v1 security review",
+      "description": "## Goal\nExecute the Phase 8 security review (§24) against the checklist: a structured self-review pass over the codebase with findings recorded and remediation tickets filed.\n\n## Acceptance Criteria\n- PR 1: crypto/key-handling review — HSM call sites, signature verification paths, no key material in logs, §14.4 boundary respected; checklist statuses updated with evidence links\n- PR 2: storage/integrity review — every DDB write conditional on epoch (§8.3, §11.2), S3 invariants (§8) upheld at all call sites, Object Lock configuration verified in cdk synth assertions (§15.3)\n- PR 3: admin surface + supply chain review — authz on every admin route, audit trail completeness (§20.3), cargo-audit/cargo-deny clean or waivers documented (§22.13)\n- Every checklist item reaches pass/finding/N.A.; zero remaining `unreviewed`\n- Each finding gets severity, description, and a filed beads ticket reference; findings summary lands in `docs/security/review-v1-findings.md`\n- Any adversarial scenario (§19.8) lacking test coverage is filed as a testing-infra ticket reference\n\n## Out of Scope\n- Remediation implementation (filed as separate tickets in owning epics); external/third-party audit (§1: solo exploration project)\n\n## Testing\n- Review evidence cites existing unit/property/fuzz/Kani tests per area (§19); lint scripts keep checklist statuses valid\n\n## Demo\nAfter merge: `make lint-security-checklist` shows 100% reviewed; findings doc enumerates open items with ticket links.",
+      "size": "M",
+      "priority": 1,
+      "phase": 8,
+      "deps": [
+        "ops-security-review-checklist"
+      ],
+      "labels": ["security", "review"]
+    },
+    {
+      "slug": "ops-chaos-triage-tool",
+      "title": "Chaos and soak result triage tool",
+      "description": "## Goal\nBuild a triage tool that consumes chaos/soak run artifacts (produced by the testing-infra harness) and emits a classified, runbook-linked summary — plus trend tracking across archived soak runs (§19.7, §19.9).\n\n## Acceptance Criteria\n- PR 1: parser + classifier — reads run result artifacts (JSON), validates schema, classifies each failure: invariant-violation (committed cert lost, split-brain, append-only breach per §19.9 pass criteria), infra-flake, timeout, known-issue (matched against a curated `known-issues.toml`)\n- PR 2: report emitter — `make triage RESULTS=<dir>` writes a markdown summary: per-scenario pass/fail vs §19.9 criteria table, failure classes, and for each failed scenario a link to its runbook (chaos-primary-loss → primary-failure, chaos-hsm-down → hsm-unavailability, etc.); invariant-violations exit nonzero\n- PR 3: soak trending — appends run summaries to a JSONL history; `make soak-report` flags cross-run regressions (memory growth, task leaks, latency drift per §19.7/§19.11) beyond configurable thresholds\n- Unit tests with fixture artifacts for every classification branch; property test: classifier is total (never panics on arbitrary valid-schema input)\n- Runs entirely locally on laptop-produced artifacts (§1 non-goals)\n\n## Out of Scope\n- Chaos harness and scenario execution (testing-infra epic); CI perf regression gating (testing-infra)\n\n## Testing\n- Unit, property (§19.2); integration against a real local chaos run's output; no fuzz/Kani/Loom\n\n## Demo\nAfter merge: run one chaos scenario locally, then `make triage RESULTS=target/chaos/latest` shows the classified report with runbook links.",
+      "size": "M",
+      "priority": 1,
+      "phase": 8,
+      "deps": [
+        "EXTERNAL:chaos/soak harness result artifact format (testing-infra epic)"
+      ],
+      "labels": ["tooling", "testing"]
+    },
+    {
+      "slug": "ops-docs-ci-quality-gates",
+      "title": "Documentation quality gates in CI",
+      "description": "## Goal\nWire documentation quality checks into CI so runbooks and docs cannot rot: markdown lint, link checking, and the runbook/checklist structure lints.\n\n## Acceptance Criteria\n- markdownlint (or equivalent) configured for `docs/**` with a committed config; violations fail CI\n- Link checker (e.g., lychee) validates intra-repo links and anchors in `docs/**` and README; external links checked in a non-blocking scheduled job only (offline-friendly per §1)\n- `make lint-runbooks` and `make lint-security-checklist` run as CI steps\n- Single `make lint-docs` target runs everything locally exactly as CI does (§22.13: same checks locally and in CI)\n- CI job added to the required-checks set; docs-only PRs skip Rust build for fast feedback\n\n## Out of Scope\n- Writing/fixing doc content (ops-docs-polish); the base CI pipeline itself\n\n## Testing\n- CI-level checks are the test; a fixture with a broken link/section verified to fail in a scratch run before merge\n\n## Demo\nAfter merge: introduce a broken relative link in a draft PR and watch the docs gate fail; `make lint-docs` reproduces locally.",
+      "size": "S",
+      "priority": 2,
+      "phase": 8,
+      "deps": [
+        "ci-pipeline",
+        "ops-runbook-framework"
+      ],
+      "labels": ["ci", "docs"]
+    },
+    {
+      "slug": "ops-docs-polish",
+      "title": "Documentation polish: README, operator guide, cross-link pass",
+      "description": "## Goal\nExecute the Phase 8 \"documentation polish\" item (§24): a final pass making the repo navigable and operable from docs alone.\n\n## Acceptance Criteria\n- PR 1: README overhaul — project summary honest about scope (§1: reference blueprint, not production), the 60-second demo (§18.1) as the front-door quickstart, links to architecture spec, runbooks, and make-target catalog (§18.8)\n- PR 2: operator guide at `docs/operations/README.md` — day-2 index tying together: all runbooks with their triggering alerts, capacity doc + calculator, dashboards/SLOs (§20.1), compliance reports and `mtcctl report` (§20.3), health endpoints (§20.5), failover quick-reference (§13)\n- PR 3: cross-link and accuracy pass — architecture spec section references verified against code reality, stale statements corrected or annotated, every crate has a purpose line in a workspace map doc\n- All pages pass `make lint-docs`; no orphan pages (everything reachable from README or docs index)\n\n## Out of Scope\n- New feature documentation for unshipped features; runbook content changes (owned by runbook tickets)\n\n## Testing\n- Doc lint + link checker (via ops-docs-ci-quality-gates); manual fresh-clone walkthrough: clone → README → `make demo` succeeds following docs only (§18.1)\n\n## Demo\nAfter merge: fresh clone, follow README to a running local CA in under 5 minutes; navigate from README to any runbook in ≤2 clicks.",
+      "size": "M",
+      "priority": 1,
+      "phase": 8,
+      "deps": [
+        "ops-docs-ci-quality-gates"
+      ],
+      "labels": ["docs"]
+    },
+    {
+      "slug": "ops-gameday-drill",
+      "title": "Game day drill script and checklist",
+      "description": "## Goal\nProvide a scripted \"game day\": an orchestrated sequence of fault injections in the local multi-region sim (§18.3) that an operator responds to using only the runbooks, validating the runbook library end-to-end.\n\n## Acceptance Criteria\n- `make gameday` runs a scenario sequence (at minimum: primary loss → old-primary recovery → HSM outage → adapter flood) with pauses prompting the operator to execute the matching runbook\n- Machine-checked success criteria after each stage reusing §19.9 pass criteria (no committed cert lost, exactly one primary, backpressure held), reported via the triage tool\n- `docs/operations/gameday.md` documents the drill: cadence recommendation, scorecard template (time-to-mitigate vs §13.5 RTO targets), and how to record results as a postmortem-lite\n- Drill completes on a laptop with no cloud resources (§1 non-goals)\n- Runbook gaps discovered during the first recorded drill are filed as tickets\n\n## Out of Scope\n- New chaos scenarios (testing-infra); automated failover (§1 non-goal: v1 is manual)\n\n## Testing\n- E2E by construction (§19.13); script smoke-tested in CI with operator steps auto-answered in a non-interactive mode\n\n## Demo\nAfter merge: `make gameday` — complete the full drill in under 30 minutes with a green scorecard.",
+      "size": "S",
+      "priority": 3,
+      "phase": 8,
+      "deps": [
+        "ops-runbook-primary-failure",
+        "ops-runbook-region-recovery",
+        "ops-runbook-hsm-unavailability",
+        "ops-runbook-adapter-flood",
+        "ops-chaos-triage-tool",
+        "EXTERNAL:chaos scenario runner (testing-infra epic)"
+      ],
+      "labels": ["tooling", "drill", "runbook"]
+    }
+  ]
+}

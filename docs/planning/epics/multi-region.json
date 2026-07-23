@@ -1,0 +1,219 @@
+{
+  "epic": {
+    "slug": "multi-region",
+    "title": "Multi-Region Coordination",
+    "description": "Implements the multi-region active-passive coordination layer for the MTC CA: the DynamoDB-backed lease/epoch protocol (spec 8.2-8.3), lease renewer, standby read-only mode, idempotent promotion, and old-primary recovery that together make split-brain impossible (spec 13). Delivers the manual failover surface (mtcctl failover CLI + admin UI), a laptop-scale three-region simulation with configurable replication lag and partition injection (spec 18.3), and the failover-specific chaos scenarios (spec 19.9). Trust-story-critical verification ships with the epic: mandatory Kani proofs of the lease/epoch invariants and Loom model checking of lease renewer vs batch builder concurrency (spec 19.12)."
+  },
+  "tickets": [
+    {
+      "slug": "lease-epoch-protocol",
+      "title": "Implement lease/epoch protocol core (acquire, renew, claim, fencing primitives)",
+      "description": "## Goal\nImplement the primary-region lease and epoch protocol (spec 8.2, 8.3) as a `coordination` crate built on the `ReplicatedKv` trait. Critical-path anchor for all multi-region work (spec 25.5).\n\n## Acceptance Criteria\n- `primary-region-lease` item per spec 8.2 schema: `region`, `expires_at`, `epoch`, `holder_id` under PK `log#{logId}`\n- `Epoch` and `HolderId` newtypes (spec 22.1); epoch checked arithmetic, strictly monotonic\n- Operations: `read_lease`, `acquire`, `renew` (conditional on holder_id + epoch; constants 20s cadence / 60s TTL per spec 8.3)\n- `claim_lease` atomically takes over an expired lease AND increments epoch in one conditional write; typed error if lease unexpired or epoch changed\n- Takeover only permitted when `expires_at` is past the 60s safety margin (spec 8.3)\n- `epoch_condition()` helper producing the epoch condition fragment all coordination writes must carry (spec 8.3)\n- Conditional failures map to typed errors (`LeaseHeld`, `LostLease`, `EpochAdvanced`) per spec 22.6\n- Same test suite passes against memory backend and LocalStack DDB (spec 9.7)\n\n## Out of Scope\n- Background renewer task (mr-lease-renewer); wiring fencing into CA writes (mr-epoch-write-fencing)\n- Full Kani invariant proofs (mr-kani-lease-epoch) — only a basic no-panic harness here\n\n## Testing\nUnit; property (proptest: N concurrent claim attempts yield exactly one winner and unique epochs); integration (LocalStack DDB); basic Kani no-panic harness.\n\n## Demo\n`cargo run -p coordination --example lease-demo` — acquire, renew, expire, takeover with epoch bump printed against the memory backend.",
+      "size": "M",
+      "priority": 0,
+      "phase": 5,
+      "labels": ["multi-region", "coordination", "critical-path"],
+      "deps": ["cloud-abstraction-traits", "memory-backend", "aws-backend"]
+    },
+    {
+      "slug": "mr-lease-renewer",
+      "title": "Lease renewer background task with epoch view and stand-down signaling",
+      "description": "## Goal\nBackground task that renews the lease every 20s (spec 8.3), maintains the service's atomic epoch view (spec 13.3 step 4), and signals lease loss to the rest of the CA service.\n\n## Acceptance Criteria\n- Tokio task renews every 20s using the injected `Clock` trait (spec 22.11); interval constants shared with the protocol crate\n- Publishes current epoch via an atomic (`SeqCst`, per spec 13.3) readable by the write path\n- On renewal failure with `LostLease`/`EpochAdvanced`: emits a stand-down signal (watch channel) consumed by the CA service\n- Transient errors retried with backoff but never past the 60s TTL safety margin — gives up and signals before expiry\n- Emits metrics/log events: renewal success/failure, time-to-expiry (feeds application self-report, spec 13.1)\n- Fake-clock tests prove missed renewals produce the stand-down signal strictly before TTL expiry\n\n## Out of Scope\n- Standby lease monitoring loop (mr-standby-mode)\n- Loom interleaving tests (mr-loom-renewer-batch)\n\n## Testing\nUnit with fake `Clock`; integration against memory backend (spec 19.1). Loom coverage arrives in mr-loom-renewer-batch.\n\n## Demo\n`make demo` then `mtcctl status --output json` twice, 20s apart — lease `expires_at` visibly refreshed by the renewer.",
+      "size": "M",
+      "priority": 1,
+      "phase": 5,
+      "labels": ["multi-region", "coordination"],
+      "deps": ["lease-epoch-protocol", "EXTERNAL:injectable Clock trait (spec 22.11, core library)"]
+    },
+    {
+      "slug": "mr-epoch-write-fencing",
+      "title": "Epoch-conditional fencing on every coordination write",
+      "description": "## Goal\nEnsure every DynamoDB coordination write includes `epoch` in its ConditionExpression so old primaries cannot write after epoch advance — the property that makes split-brain impossible (spec 8.3, 13.4).\n\n## Acceptance Criteria\n- Counter UpdateItem, batch item writes, and `latest-checkpoint` / `latest-revocation` pointer writes (spec 8.2) all carry the epoch condition via `epoch_condition()`\n- ConditionalCheckFailed on epoch mismatch maps to `LostLease`; on `LostLease` the write path stops retrying and halts issuance (role-transition wiring lands in mr-standby-mode)\n- Property test: interleaved writes from two simulated epochs — no stale-epoch write ever takes effect, committed data never overwritten\n- Integration test on LocalStack: bump epoch out-of-band, verify every write type is rejected\n- `#[must_use]` on fencing results (spec 22.10)\n\n## Out of Scope\n- Promotion procedure (mr-promotion-procedure); standby role machine (mr-standby-mode)\n- Kani write-fencing proof (mr-kani-lease-epoch)\n\n## Testing\nUnit; property (proptest); integration (LocalStack DDB) per spec 19.1 and the spec 25.4 exemplar ticket.\n\n## Demo\n`make demo`, then dev script force-bumps the epoch out-of-band; service logs `LostLease` and halts issuance with no further write attempts in the log.",
+      "size": "M",
+      "priority": 1,
+      "phase": 5,
+      "labels": ["multi-region", "coordination", "safety"],
+      "deps": ["lease-epoch-protocol", "storage-facade-core", "batch-builder", "tree-updater"]
+    },
+    {
+      "slug": "mr-standby-mode",
+      "title": "Standby read-only mode and region role state machine",
+      "description": "## Goal\nCA service instances run as Primary or Standby; standbys monitor the lease but never write (spec 8.3, 13.1).\n\n## Acceptance Criteria\n- Role state machine per spec 22.4: `Primary`, `Standby`, `StandingDown`; illegal transitions unrepresentable\n- In Standby: entry intake rejected/paused via the `EntryIntake` seam, batch builder idle, read/status endpoints stay live\n- Standby periodically reads the lease item (lease expiry monitoring, spec 13.1) and records data-freshness metrics (replicated checkpoint age)\n- Stand-down signal (from renewer or fencing) transitions Primary to Standby cleanly: in-flight work abandoned, no partial coordination writes\n- Role, lease view, and epoch exposed on the health endpoint (spec 20.5); CLI surfacing lands in mr-lease-cli\n- Transition events logged and emitted for SSE consumption (spec 17.4)\n\n## Out of Scope\n- Promotion to Primary (mr-promotion-procedure)\n- Old-primary rejoin specifics (mr-old-primary-standdown)\n\n## Testing\nUnit (state machine transitions); integration: two instances sharing a memory backend — standby performs zero writes while primary issues (spec 19.1).\n\n## Demo\nRun two CA instances against one shared backend; second instance reports `Standby` on its health endpoint and refuses `mtcctl cert issue`.",
+      "size": "M",
+      "priority": 1,
+      "phase": 5,
+      "labels": ["multi-region", "coordination"],
+      "deps": ["mr-lease-renewer", "batch-builder", "entry-intake-trait"]
+    },
+    {
+      "slug": "mr-promotion-procedure",
+      "title": "Idempotent promotion procedure (verify, abandon, claim, gap-fill, resume)",
+      "description": "## Goal\nImplement `CaService::promote()` exactly per spec 13.3 — idempotent and safe to re-run after partial failure, with zero RPO for committed work (spec 13.5).\n\n## Acceptance Criteria\n- Step 1: read latest checkpoint, verify signature (`PromoteError::InvalidCheckpoint` on failure); `wait_for_crr` when the tile snapshot is inconsistent with the checkpoint\n- Step 2: query pending batches and mark each abandoned (epoch-conditional writes)\n- Step 3: `claim_lease` atomically increments epoch; Step 4: local epoch view stored `SeqCst`\n- Step 5: first post-promotion batch fills index gaps with `null_entry`, then issuance resumes\n- Idempotency: test kills `promote()` at every step boundary and re-runs; state converges, no duplicate abandonment or double epoch bump\n- Test proves RPO zero: every checkpoint-committed entry verifiable after promotion\n\n## Out of Scope\n- CLI/API trigger (mr-failover-initiate); readiness assessment (mr-failover-readiness)\n- Chaos automation (mr-chaos-* tickets)\n\n## Testing\nUnit; integration (memory backend + LocalStack); property (promote applied n times equals once) per spec 19.1.\n\n## Demo\n`mtcctl repl` — call `promote` against a standby wired to a snapshot; observe epoch bump, gap-fill batch, and resumed issuance in logs.",
+      "size": "M",
+      "priority": 1,
+      "phase": 5,
+      "labels": ["multi-region", "failover"],
+      "deps": ["lease-epoch-protocol", "storage-facade-core", "batch-builder", "checkpoint-signer"]
+    },
+    {
+      "slug": "mr-old-primary-standdown",
+      "title": "Old-primary recovery: detect higher epoch and stand down",
+      "description": "## Goal\nA failed primary that returns must observe the new lease holder and higher epoch, then demote itself to standby read-only without a single successful write (spec 13.4).\n\n## Acceptance Criteria\n- On startup and on every renewal attempt, the service compares lease holder/epoch; different holder with higher epoch forces transition to Standby before any write is attempted\n- Any in-flight write from the old epoch fails with `LostLease` (fencing) and is not retried under the stale epoch\n- Two-instance integration test: old primary resumes after simulated partition heal — exactly one writer exists at all times; storage audit shows zero stale-epoch writes accepted\n- Recovery/demotion emits event + metric (feeds spec 20 observability)\n\n## Out of Scope\n- Chaos scenario automation (mr-chaos-old-primary-recovery)\n- Automated failback to the recovered region (non-goal, spec 1)\n\n## Testing\nUnit; integration with memory backend partition simulation (spec 19.1).\n\n## Demo\nTwo instances on a shared backend; block the primary's backend access until its lease expires, promote the standby, unblock — old primary logs a stand-down event and reports `Standby`.",
+      "size": "S",
+      "priority": 1,
+      "phase": 5,
+      "labels": ["multi-region", "failover", "safety"],
+      "deps": ["mr-standby-mode", "mr-epoch-write-fencing"]
+    },
+    {
+      "slug": "mr-failover-readiness",
+      "title": "Failover readiness assessment: API + `mtcctl failover status`",
+      "description": "## Goal\nImplement the spec 13.2 pre-failover verification as an admin API endpoint plus `mtcctl failover status` (spec 17.3): is it safe to fail over, and to where?\n\n## Acceptance Criteria\n- OpenAPI-first `GET /failover/status` route (spec 17.2) reporting: primary reachability, per-standby freshness (latest checkpoint replicated, S3 CRR current), and recommended candidate selected by data freshness (spec 13.2 checks 1-3)\n- `mtcctl failover status` renders assessment human-readable and via `--output json` (spec 17.3)\n- Works when primary is unreachable — assessment computed from standby-visible replicated state\n- Lagged-standby integration test: readiness is false with a machine-readable reason\n- Generated OpenAPI client used by CLI (no hand-rolled HTTP)\n\n## Out of Scope\n- Initiating failover (mr-failover-initiate); UI rendering (mr-failover-ui)\n- Route 53 health check infrastructure (mr-multiregion-cdk)\n\n## Testing\nUnit; integration (memory backend with simulated replication lag); E2E via CLI (spec 19.13).\n\n## Demo\n`make demo` with a second standby instance; `mtcctl failover status` shows ready/not-ready with reasons; stall the standby's replication feed via test hook and watch it flip to not-ready.",
+      "size": "M",
+      "priority": 1,
+      "phase": 5,
+      "labels": ["multi-region", "failover", "cli"],
+      "deps": ["admin-api-core", "lease-epoch-protocol", "storage-facade-core"]
+    },
+    {
+      "slug": "mr-failover-initiate",
+      "title": "Manual failover: `mtcctl failover initiate` privileged command + API",
+      "description": "## Goal\nImplement `mtcctl failover initiate --to <region> --reason <text>` (spec 13.2, 17.3): the deliberate human decision that orchestrates verified promotion in v1 (automated failover is a non-goal, spec 1).\n\n## Acceptance Criteria\n- Privileged command: interactive `--confirm` or `--yes` for automation (spec 17.3 authorization)\n- Runs readiness checks first; refuses when target is not caught up unless `--force` (recorded in output and audit trail)\n- Triggers `promote()` on the target region via its admin API; streams step-by-step progress; exit code reflects outcome\n- `--reason` and operator identity recorded in an auditable record\n- Re-invoking after partial failure resumes safely (delegates to promote idempotency, spec 13.3)\n- E2E test in the multi-region sim: initiate makes target Primary and the old primary is fenced out\n\n## Out of Scope\n- UI button (mr-failover-ui); failover runbook document (operational-tooling)\n- Automated failover decision-making (v2, spec 13.5)\n\n## Testing\nUnit; integration; E2E via CLI in multi-region sim (spec 19.13).\n\n## Demo\n`make demo-multiregion`; `make partition-region us-east-1`; `mtcctl failover initiate --to us-west-2 --reason \"demo\"` (spec 18.3) — us-west-2 becomes primary and issues.",
+      "size": "M",
+      "priority": 1,
+      "phase": 5,
+      "labels": ["multi-region", "failover", "cli"],
+      "deps": ["mr-failover-readiness", "mr-promotion-procedure", "mr-demo-multiregion"]
+    },
+    {
+      "slug": "mr-failover-ui",
+      "title": "Admin UI: lease and failover views with SSE (CLI parity)",
+      "description": "## Goal\nDeliver CLI/UI parity (spec 17.1) for lease and failover: a lease page and a failover control view in the htmx + Askama admin UI (spec 17.4).\n\n## Acceptance Criteria\n- `handlers/lease.rs` + `pages/lease.html` per spec 17.4 layout: current holder, region, epoch, `expires_at` countdown, recent transitions, dev-only force-renew button\n- Failover view: readiness assessment (same API the CLI consumes) and an Initiate Failover control gated by a typed-confirmation dialog (privileged, mirrors `--confirm`)\n- SSE stream pushes lease events (renewals, takeovers, stand-downs) live without polling (spec 17.4)\n- Askama compile-time-checked templates; no JS beyond vendored htmx + vanilla helpers\n- Failover progress rendered live during promotion\n\n## Out of Scope\n- Dashboard/batches/audit views (admin-surface epic)\n- Readiness/promotion logic (consumed via API only)\n\n## Testing\nUnit (template render with fixture state); E2E: drive a failover from the UI against the multi-region sim (spec 19.13 layers, webapp-driven).\n\n## Demo\n`make demo-multiregion`; open the admin UI lease page, watch the countdown tick via SSE, click Initiate Failover, watch the standby promote live.",
+      "size": "M",
+      "priority": 1,
+      "phase": 5,
+      "labels": ["multi-region", "failover", "ui"],
+      "deps": ["mr-failover-initiate", "EXTERNAL:admin UI shell (htmx + Askama, Phase 0)"]
+    },
+    {
+      "slug": "mr-lease-cli",
+      "title": "`mtcctl lease show` / `lease renew` commands",
+      "description": "## Goal\nCLI surface for lease inspection and dev-only forced renewal per the spec 17.3 command tree, plus lease fields in `mtcctl status`.\n\n## Acceptance Criteria\n- `mtcctl lease show`: holder, region, `expires_at`, epoch; supports `--output json|yaml` (spec 17.3)\n- `mtcctl lease renew`: dev/test only — gated to dev profile and privileged confirmation (`--confirm`/`--yes`)\n- `mtcctl status` includes lease + epoch + role summary (spec 17.3)\n- Commands consume generated OpenAPI client routes (spec 17.2); no hand-rolled HTTP\n- Human output covered by a golden-file test; JSON output validated against the OpenAPI schema in tests\n\n## Out of Scope\n- Failover subcommands (mr-failover-readiness, mr-failover-initiate)\n- UI lease page (mr-failover-ui)\n\n## Testing\nUnit; E2E via CLI against `make demo` environment (spec 19.13).\n\n## Demo\n`make demo` then `mtcctl lease show` displays the live lease with expiry countdown; `mtcctl lease renew --yes` visibly refreshes `expires_at`.",
+      "size": "S",
+      "priority": 2,
+      "phase": 5,
+      "labels": ["multi-region", "cli"],
+      "deps": ["admin-api-core", "mr-lease-renewer"]
+    },
+    {
+      "slug": "mr-replication-sim",
+      "title": "Simulated cross-region replication (S3 CRR + DDB Global Tables) with configurable lag",
+      "description": "## Goal\nA local replication shim that copies S3 objects and DDB items between per-region LocalStack instances with configurable lag, enabling laptop-scale multi-region behavior (spec 18.3; zero-cost local sim per spec 1 non-goals).\n\n## Acceptance Criteria\n- S3 CRR simulator: replicates writes from a source-region bucket to peer-region buckets after a configurable delay\n- DDB Global Tables simulator: replicates coordination-table writes across instances with configurable lag; conflict semantics (last-writer-wins) documented\n- Lag configurable per link at runtime, including stall (infinite lag) to support chaos-crr-stall (spec 19.9)\n- Runs as a compose sidecar; clean shutdown; replication position observable for readiness checks\n- Unit tests for ordering and lag behavior; integration test across two LocalStack instances\n\n## Out of Scope\n- Three-region topology and make targets (mr-demo-multiregion)\n- Chaos scenario definitions (mr-chaos-* tickets)\n\n## Testing\nUnit; integration (two LocalStack instances) per spec 19.1.\n\n## Demo\nStart two LocalStack instances + the sim with `lag=5s`; put an object in region A; watch it appear in region B five seconds later.",
+      "size": "M",
+      "priority": 1,
+      "phase": 5,
+      "labels": ["multi-region", "dev-env"],
+      "deps": ["localstack-dev-env"]
+    },
+    {
+      "slug": "mr-demo-multiregion",
+      "title": "`make demo-multiregion`: three-region local topology + partition injection",
+      "description": "## Goal\nOne command brings up three CA instances simulating us-east-1, us-west-2, eu-west-1 with simulated replication, plus `make partition-region` for network partition injection (spec 18.3).\n\n## Acceptance Criteria\n- `make demo-multiregion`: compose profile with 3 CA services, per-region LocalStack, replication sim wired between them (spec 18.3)\n- Exactly one instance acquires the lease and becomes Primary; the other two report Standby\n- `make partition-region us-east-1` isolates that instance (compose network disconnect or toxiproxy); its lease expires and becomes takeover-eligible (spec 8.3)\n- `make heal-region us-east-1` restores connectivity\n- `mtcctl` can target each region's admin API (flag or env)\n- Startup and teardown scripted; runs entirely on a laptop; dev README section documents the flow (runbook prose stays in operational-tooling)\n\n## Out of Scope\n- Failover execution in the sim (mr-failover-initiate and mr-chaos-* exercise it)\n- Replication shim internals (mr-replication-sim)\n\n## Testing\nIntegration script asserting one Primary and two Standbys post-boot; E2E smoke of partition, lease expiry, and heal in nightly CI (spec 19.1, 19.13).\n\n## Demo\n`make demo-multiregion`; `mtcctl status` per region shows one Primary, two Standbys; `make partition-region us-east-1` — lease expires and shows takeover-eligible; `make heal-region us-east-1`.",
+      "size": "M",
+      "priority": 1,
+      "phase": 5,
+      "labels": ["multi-region", "dev-env"],
+      "deps": ["mr-replication-sim", "mr-standby-mode"]
+    },
+    {
+      "slug": "mr-multiregion-cdk",
+      "title": "CDK: coordination Global Table replicas + Route 53 health checks (synth-only)",
+      "description": "## Goal\nInfrastructure-as-code for multi-region coordination: the `mtc-log-coordination` DynamoDB Global Table replicated to three regions (spec 8.2) and Route 53 health checks for detection (spec 13.1). Synth assertions only — no cloud deployment or spend (spec 1 non-goals).\n\n## Acceptance Criteria\n- Global Table construct with replicas in the three target regions, PK/SK per spec 8.2\n- Route 53 health check per region: HTTPS endpoint, 10s interval, fail after 3 consecutive failures (spec 13.1)\n- Fine-grained `aws-cdk-lib/assertions` tests for table replication config and health check parameters, plus a snapshot test\n- Stack synthesizes cleanly in CI; no stack requires deployment to validate\n\n## Out of Scope\n- CloudWatch alarms/dashboards on lease metrics (observability epic)\n- Any real AWS deployment (spec 1 non-goals)\n\n## Testing\nUnit (CDK assertions + snapshot) per spec 19.1.\n\n## Demo\n`npx cdk synth MultiRegionCoordinationStack` renders the template; CDK assertion tests pass in CI.",
+      "size": "S",
+      "priority": 2,
+      "phase": 5,
+      "labels": ["multi-region", "infra", "cdk"],
+      "deps": ["cdk-skeleton"]
+    },
+    {
+      "slug": "mr-cross-region-keys-dev",
+      "title": "Per-region SoftHSM keys with dev key-replication ceremony",
+      "description": "## Goal\nSimulate spec 14.2 Option A locally: each simulated region owns a SoftHSM token holding a replicated copy of the signing key, so no cross-region HSM dependency exists on the hot path and a promoted region can sign immediately.\n\n## Acceptance Criteria\n- `make key-ceremony` provisions per-region SoftHSM tokens and replicates the signing key via wrapped export/import — key material never lands on disk in plaintext (spec 14.2 replication ceremony, dev-scale)\n- Each region's CA instance signs using only its local token; hot path never calls another region's HSM (spec 14.2)\n- After failover, the promoted region signs checkpoints with its local key; test verifies signature continuity (same public key) across the failover boundary\n- `make demo-multiregion` provisions tokens automatically\n- Ceremony steps self-documenting via script help (runbook prose stays in operational-tooling)\n\n## Out of Scope\n- CloudHSM clusters/CDK; key rotation ceremonies\n\n## Testing\nIntegration (three SoftHSM tokens, sign-after-failover); E2E inside the multi-region demo (spec 19.1).\n\n## Demo\n`make demo-multiregion`, fail over to us-west-2, then `mtcctl log verify` — new checkpoints validate against the same CA public key.",
+      "size": "M",
+      "priority": 2,
+      "phase": 5,
+      "labels": ["multi-region", "hsm", "dev-env"],
+      "deps": ["softhsm-backend", "mr-demo-multiregion"]
+    },
+    {
+      "slug": "mr-kani-lease-epoch",
+      "title": "Kani proofs of lease/epoch invariants (mandatory)",
+      "description": "## Goal\nMachine-checked verification of the lease/epoch protocol with Kani (spec 19.12) — explicitly not optional; core to the trust story (spec 24 Phase 5) and the auditor-facing differentiator.\n\n## Acceptance Criteria\n- Protocol logic factored into a pure, verification-friendly state machine (KV effects modeled as transitions) with no behavior change; production code paths call the same logic\n- Harness: mutual exclusion — no reachable state where two holders both hold a current-epoch lease (spec 19.12)\n- Harness: epoch strictly increases on every takeover (spec 8.3)\n- Harness: takeover only possible when the lease is expired past the 60s safety margin (spec 8.3)\n- Harness: a fenced write carrying a stale epoch can never be accepted (spec 13.4 split-brain impossibility)\n- Harness: absence of panics and integer overflow in protocol arithmetic\n- All harnesses run in the CI Kani job within its time budget; harness intent documented in the crate README\n\n## Out of Scope\n- Kani for tree primitives (core-mtc-library) and write-path linearization (ca-service) per spec 19.12\n- Loom tests (mr-loom-renewer-batch)\n\n## Testing\nKani (primary); unit tests for the refactored state machine.\n\n## Demo\n`make kani` (or `cargo kani -p coordination`) prints all lease/epoch harnesses VERIFIED; required CI check is green.",
+      "size": "M",
+      "priority": 0,
+      "phase": 5,
+      "labels": ["multi-region", "formal-verification", "kani", "critical-path"],
+      "deps": ["lease-epoch-protocol", "EXTERNAL:Kani runner/CI job (testing-infra)"]
+    },
+    {
+      "slug": "mr-loom-renewer-batch",
+      "title": "Loom concurrency model check: lease renewer vs batch builder",
+      "description": "## Goal\nExhaustively model-check interleavings of the lease renewer, batch builder, and stand-down signaling with Loom (spec 19.12) to rule out races that traditional testing misses.\n\n## Acceptance Criteria\n- `cfg(loom)`-gated sync shim for the shared epoch atomic and stand-down channel in the coordination crate\n- Loom test: the batch builder never commits a coordination write after the renewer has observed lease loss (epoch view `SeqCst` ordering per spec 13.3)\n- Loom test: no deadlock among renewer, batch builder, and the Primary-to-Standby transition\n- Loom test: no window where a write passes the fencing check under an epoch the renewer already knows is stale\n- Shuttle randomized test covering the same properties at larger state sizes (spec 19.12)\n- Runs in the CI loom job with a documented preemption bound\n\n## Out of Scope\n- Loom/Shuttle CI scaffolding (testing-infra)\n- Intake-handler concurrency beyond its hand-off to the batch builder\n\n## Testing\nLoom; Shuttle (spec 19.12).\n\n## Demo\n`make loom` (or `cargo test -p coordination --features loom --release`) enumerates interleavings and passes; CI job green.",
+      "size": "M",
+      "priority": 1,
+      "phase": 5,
+      "labels": ["multi-region", "formal-verification", "loom"],
+      "deps": ["mr-standby-mode", "mr-epoch-write-fencing", "EXTERNAL:Loom/Shuttle harness setup (testing-infra)"]
+    },
+    {
+      "slug": "mr-chaos-primary-loss",
+      "title": "Chaos scenario: chaos-primary-loss",
+      "description": "## Goal\nImplement the chaos-primary-loss scenario (spec 19.9): kill the primary mid-batch; pass criterion is that the new primary promotes and no committed cert is lost.\n\n## Acceptance Criteria\n- Scenario kills the primary container mid-batch (entries in flight, prior batches committed) in the multi-region sim\n- Scripted operator step performs `mtcctl failover initiate` to the recommended standby (manual failover is the v1 model, spec 13.2)\n- Pass: promotion succeeds; every checkpoint-committed cert remains verifiable post-failover — RPO zero (spec 13.5)\n- Uncommitted in-flight entries are cleanly abandoned and their index gaps filled with `null_entry` (spec 13.3 step 5)\n- `make chaos-primary-loss` runs the scenario with a pass/fail exit code; tagged for nightly CI\n\n## Out of Scope\n- Chaos framework/fault-injection infrastructure (testing-infra)\n- Other chaos scenarios (independent tickets per spec 25.6)\n\n## Testing\nChaos/E2E (spec 19.9, 19.13).\n\n## Demo\n`make chaos-primary-loss` prints the scenario timeline (kill, failover, verify) and PASS.",
+      "size": "S",
+      "priority": 1,
+      "phase": 5,
+      "labels": ["multi-region", "chaos", "failover"],
+      "deps": ["mr-demo-multiregion", "mr-failover-initiate", "EXTERNAL:chaos test framework (testing-infra)"]
+    },
+    {
+      "slug": "mr-chaos-split-brain",
+      "title": "Chaos scenario: chaos-split-brain",
+      "description": "## Goal\nImplement the chaos-split-brain scenario (spec 19.9): two regions attempt promotion concurrently; pass criterion is that exactly one succeeds (the epoch invariant).\n\n## Acceptance Criteria\n- Scenario partitions the primary, then triggers `promote()` on both standbys simultaneously in the multi-region sim\n- Pass: exactly one `claim_lease` succeeds; the loser receives a typed `LeaseHeld`/`EpochAdvanced` error and remains Standby\n- Post-checks: a single writer exists; storage audit finds zero coordination items written under the losing epoch (spec 13.4); log remains verifiable end-to-end\n- Scenario repeated N times with randomized timing to shake out orderings\n- `make chaos-split-brain` with pass/fail exit code; tagged for nightly CI\n\n## Out of Scope\n- Chaos framework infrastructure (testing-infra)\n- Kani-level proof of the same invariant (mr-kani-lease-epoch)\n\n## Testing\nChaos/E2E (spec 19.9, 19.13).\n\n## Demo\n`make chaos-split-brain` shows both promotion attempts, one winner, one clean loser, and PASS.",
+      "size": "S",
+      "priority": 1,
+      "phase": 5,
+      "labels": ["multi-region", "chaos", "safety"],
+      "deps": ["mr-demo-multiregion", "mr-promotion-procedure", "EXTERNAL:chaos test framework (testing-infra)"]
+    },
+    {
+      "slug": "mr-chaos-replication-lag",
+      "title": "Chaos scenarios: chaos-crr-stall and chaos-ddb-lag",
+      "description": "## Goal\nImplement the two replication-lag scenarios (spec 19.9): a 30-minute CRR stall must make failover wait for catchup; DDB Global Tables lag must produce stale-but-never-incorrect reads and no split-brain.\n\n## Acceptance Criteria\n- chaos-crr-stall: replication sim stalls S3 CRR; `mtcctl failover status` reports not-ready with reason; `failover initiate` blocks in `wait_for_crr` (spec 13.3 step 1) and completes only after catchup — pass: failover waits\n- chaos-ddb-lag: inject DDB replication lag; pass: no split-brain, and standby-visible state is stale, never incorrect (monotonic, verifiable)\n- Stall/lag durations configurable per run; scenarios use compressed timescales (seconds standing in for the spec's 30-minute fault) so the suite completes in nightly CI\n- `make chaos-crr-stall` and `make chaos-ddb-lag` targets with pass/fail exit codes; nightly CI tags\n- Delivered as two independently shippable PRs, one per scenario\n\n## Out of Scope\n- Chaos framework infrastructure (testing-infra)\n- Replication sim lag mechanics (mr-replication-sim)\n\n## Testing\nChaos/E2E (spec 19.9, 19.13).\n\n## Demo\n`make chaos-crr-stall` shows failover refusing then completing after catchup; `make chaos-ddb-lag` shows stale-not-incorrect reads; both PASS.",
+      "size": "M",
+      "priority": 2,
+      "phase": 5,
+      "labels": ["multi-region", "chaos", "failover"],
+      "deps": ["mr-demo-multiregion", "mr-failover-initiate", "EXTERNAL:chaos test framework (testing-infra)"]
+    },
+    {
+      "slug": "mr-chaos-old-primary-recovery",
+      "title": "Chaos scenario: chaos-old-primary-recovery",
+      "description": "## Goal\nImplement the chaos-old-primary-recovery scenario (spec 19.9): a failed primary returns after failover; pass criterion is that it stands down to read-only.\n\n## Acceptance Criteria\n- Scenario: partition the primary, fail over to a standby, then heal the partition so the old primary reconnects\n- Pass: old primary observes the higher epoch and different holder, transitions to Standby, and serves reads (spec 13.4)\n- Storage audit confirms zero writes accepted from the old primary after the epoch advance (fencing held throughout)\n- Old primary participates as a valid failover candidate again once caught up (readiness reflects it)\n- `make chaos-old-primary-recovery` with pass/fail exit code; nightly CI tag\n\n## Out of Scope\n- Chaos framework infrastructure (testing-infra)\n- Stand-down implementation itself (mr-old-primary-standdown)\n\n## Testing\nChaos/E2E (spec 19.9, 19.13).\n\n## Demo\n`make chaos-old-primary-recovery` shows partition, failover, heal, stand-down event, and PASS.",
+      "size": "S",
+      "priority": 2,
+      "phase": 5,
+      "labels": ["multi-region", "chaos", "failover"],
+      "deps": ["mr-demo-multiregion", "mr-old-primary-standdown", "mr-failover-initiate", "EXTERNAL:chaos test framework (testing-infra)"]
+    },
+    {
+      "slug": "mr-chaos-clock-skew",
+      "title": "Chaos scenario: chaos-clock-skew",
+      "description": "## Goal\nImplement the chaos-clock-skew scenario (spec 19.9): with up to plus/minus 60s of clock skew between regions, lease semantics must remain correct.\n\n## Acceptance Criteria\n- Per-region fake `Clock` skewed independently via the admin API (injected Clock per spec 18.4, 22.11)\n- Standby skewed +60s: takeover attempt (`promote()`) is refused while the lease is inside the 60s safety margin — no premature takeover (spec 8.3)\n- Primary skewed -60s: renewals either keep the lease alive or the primary stands down cleanly; at no point do two writers exist\n- Sweep over the skew grid {-60s, -30s, 0, +30s, +60s} for primary x standby (25 combinations) asserts the epoch invariant and single-writer property for every cell\n- `make chaos-clock-skew` with pass/fail exit code; nightly CI tag\n\n## Out of Scope\n- Chaos framework infrastructure (testing-infra)\n- Fake-clock admin plumbing (local-dev-experience epic, spec 18.4)\n\n## Testing\nChaos/E2E (spec 19.9, 19.13); property-style skew sweep.\n\n## Demo\n`make chaos-clock-skew` prints the skew matrix with per-cell single-writer verdicts and PASS.",
+      "size": "S",
+      "priority": 2,
+      "phase": 5,
+      "labels": ["multi-region", "chaos", "safety"],
+      "deps": ["mr-demo-multiregion", "mr-promotion-procedure", "EXTERNAL:chaos test framework (testing-infra)", "EXTERNAL:controllable fake clock via admin API (spec 18.4, local-dev-experience)"]
+    }
+  ]
+}

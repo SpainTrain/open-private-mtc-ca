@@ -1,0 +1,324 @@
+{
+  "epic": {
+    "slug": "read-path",
+    "title": "Read Path",
+    "description": "Implements the MTC read path per spec section 12: a stateless Lambda proof-server fronted by CloudFront (CDK synth-tested only, with a LocalStack-equivalent local serving mode), inclusion/consistency proof generation over stored tiles and checkpoints, a relying-party verification library covering the full 12.1 flow including the signatureless landmark optimization, and mtcctl log commands for proof inspection and verification. Everything runs on a laptop against LocalStack per section 1 non-goals; tree primitives and serialization come from core-mtc-library, storage layout from storage-facade."
+  },
+  "tickets": [
+    {
+      "slug": "read-tile-plan",
+      "title": "Tile path planner: map (tree_size, leaf_index) to tiles for the inclusion path",
+      "description": "## Goal\nPure planning function for spec 12.2 step 3: given a checkpoint tree size and a leaf index, compute the ordered tile coordinates (level, tile index) and intra-tile hash offsets needed to assemble the inclusion path, using the 256-leaf tile model (sections 2, 8.1).\n\n## Acceptance Criteria\n- `plan_inclusion(tree_size, index) -> Result<TilePlan, PlanError>` in a new read-path crate; `TilePlan` lists tile coordinates plus which hash positions within each tile are required\n- `index >= tree_size` rejected with a typed error, never a panic\n- Partial (right-edge) tiles handled correctly at every level\n- Unit tests cover tree sizes 1, 255, 256, 257, and multi-level tile boundaries\n- Property test: for arbitrary N <= 2^20 and i < N, hashes extracted per the plan reproduce exactly the inclusion proof computed directly by tree-primitives (section 19.2)\n\n## Out of Scope\n- Fetching tile bytes from storage (read-proof-gen-core)\n- Consistency-proof planning (read-consistency-gen)\n- Merkle hashing/proof math itself (core-mtc-library tree-primitives)\n\n## Testing\nUnit + property (proptest, sections 19.1-19.2). No external dependencies.\n\n## Demo\nAfter merge: `cargo test -p mtc-read`; doctest example prints the tile plan for tree_size=1000, index=513.",
+      "size": "S",
+      "priority": 0,
+      "phase": 4,
+      "deps": [
+        "tree-primitives",
+        "core-mtc-types"
+      ],
+      "labels": [
+        "read-path",
+        "rust"
+      ]
+    },
+    {
+      "slug": "read-proof-gen-core",
+      "title": "Proof generation service core implementing the 12.2 pipeline",
+      "description": "## Goal\nLibrary implementing spec 12.2: read latest-checkpoint pointer, fetch checkpoint object, plan tiles, fetch tiles via the storage facade, extract sibling hashes, construct and serialize `MTCProof`.\n\n## Acceptance Criteria\n- `ProofService::inclusion_proof(index) -> Result<MTCProof, ProofError>` generic over the storage facade so memory and LocalStack backends both work (section 9.6)\n- Typed errors: `NoCheckpoint`, `IndexBeyondCheckpoint`, `TileMissing`, `TileCorrupt`; malformed tile bytes yield errors, never panics (section 19.8 'malformed tiles to proof generator')\n- Returned proof verifies against the checkpoint using tree-primitives verification\n- Checkpoint returned alongside the proof so callers can verify end-to-end\n- Property test: arbitrary log contents written via the facade -> generated proof round-trips serialization and verifies (section 19.2)\n- Integration test against LocalStack behind `--features integration` (section 19.1)\n\n## Out of Scope\n- Lambda/HTTP wrapper (read-proof-server-lambda)\n- Tile LRU cache (storage-facade owns it, Phase 2)\n- Consistency proofs (read-consistency-gen)\n\n## Testing\nUnit (memory backend), property, adversarial malformed-tile fixtures, integration (LocalStack).\n\n## Demo\nWith `make demo` running: `cargo run -p mtc-read --example gen-proof -- --index 42` prints a verified proof.",
+      "size": "M",
+      "priority": 0,
+      "phase": 4,
+      "deps": [
+        "read-tile-plan",
+        "mtc-serialization",
+        "storage-facade-core",
+        "memory-backend"
+      ],
+      "labels": [
+        "read-path",
+        "rust"
+      ]
+    },
+    {
+      "slug": "read-proof-server-lambda",
+      "title": "Lambda proof-server binary with local serve mode",
+      "description": "## Goal\nThe proof-server Lambda (sections 7, 12.2, 12.3): HTTP surface over the proof generation core, deployable as a Lambda and runnable as a plain local HTTP server for the laptop environment.\n\n## Acceptance Criteria\n- Axum router shared between a `lambda_http` entrypoint and a `--serve --port N` standalone mode\n- Routes: `GET /v1/proof/{index}`, `GET /v1/checkpoint/latest`, plus `/health/liveness` and `/health/readiness` (section 20.5)\n- S3/DDB clients and facade constructed once at module init and reused across invocations (section 12.3)\n- 404 with problem+json for unknown index; 503 while no checkpoint exists\n- Explicit Cache-Control per route, rationale documented against 8.1 immutability invariants (short TTL for latest-checkpoint-relative responses)\n- Unit tests drive the router with the memory backend via `tower::ServiceExt`\n- Integration test boots the binary against LocalStack and asserts a served proof verifies\n\n## Out of Scope\n- CDK deployment constructs (read-cdk-infra)\n- Entry/cert download routes (read-cert-download)\n- CloudFront (read-cdk-infra); provisioned concurrency is infra config, not code\n\n## Testing\nUnit, integration (LocalStack, `--features integration`, section 19.1).\n\n## Demo\n`make demo` up, then `cargo run -p proof-server -- --serve --port 9090` and `curl localhost:9090/v1/proof/0`.",
+      "size": "M",
+      "priority": 1,
+      "phase": 4,
+      "deps": [
+        "read-proof-gen-core",
+        "aws-backend"
+      ],
+      "labels": [
+        "read-path",
+        "rust",
+        "lambda"
+      ]
+    },
+    {
+      "slug": "read-cert-download",
+      "title": "Certificate and entry download endpoints on proof-server",
+      "description": "## Goal\nProof-server serves 'inclusion proofs and certificate downloads' (section 7 component table). Add entry and assembled-certificate download routes.\n\n## Acceptance Criteria\n- `GET /v1/entry/{index}` returns the raw `TBSCertificateLogEntry` bytes from `entries/` (section 8.1)\n- `GET /v1/cert/{index}` returns the assembled certificate (entry + MTCProof) in DER via the mtc-serialization assembly routines, with PEM via content negotiation or `?format=pem`\n- 404 with typed problem body for out-of-range or pruned indices\n- Long-lived `Cache-Control: immutable` on entry responses, entries never change once written (8.1 S3 invariants)\n- Unit tests (memory backend) and one LocalStack integration test per route\n\n## Out of Scope\n- Proof route itself (read-proof-server-lambda)\n- Revocation list distribution routes (revocation epic, section 16.2)\n- Pruning semantics (pruning epic decides what 'pruned' returns; here it is just 404)\n\n## Testing\nUnit, integration (LocalStack, section 19.1).\n\n## Demo\nWith the local server running: `curl localhost:9090/v1/cert/0 | openssl x509 -inform DER -noout -text`.",
+      "size": "S",
+      "priority": 2,
+      "phase": 4,
+      "deps": [
+        "read-proof-server-lambda",
+        "mtc-serialization"
+      ],
+      "labels": [
+        "read-path",
+        "rust",
+        "lambda"
+      ]
+    },
+    {
+      "slug": "read-api-openapi",
+      "title": "OpenAPI contract and generated client for read-path endpoints",
+      "description": "## Goal\nSpec-first contract for the read-path HTTP surface using the foundation OpenAPI codegen pipeline (mandated for the admin API in 17.2; extended here to the read surface), producing a generated Rust client for tests and scripting.\n\n## Acceptance Criteria\n- `openapi/read-path.yaml` covers proof, latest-checkpoint, entry/cert download, and health routes with error schemas (problem+json)\n- `make api-gen` (section 18.8) regenerates the client crate; CI fails on uncommitted drift\n- Contract test: generated client exercises every route against the in-process router (memory backend), asserting success and error shapes match the spec\n\n## Out of Scope\n- Admin API spec (admin-surface epic)\n- Client retry/backoff policy tuning (post-v1)\n\n## Testing\nUnit/contract tests; codegen drift check in CI (section 22.13 baseline).\n\n## Demo\n`make api-gen && cargo test -p read-client` passes; diff shows no drift.",
+      "size": "S",
+      "priority": 3,
+      "phase": 4,
+      "deps": [
+        "openapi-codegen-pipeline",
+        "read-cert-download"
+      ],
+      "labels": [
+        "read-path",
+        "openapi"
+      ]
+    },
+    {
+      "slug": "read-cdk-infra",
+      "title": "CDK constructs: proof-server Lambda + CloudFront distribution (synth-tested)",
+      "description": "## Goal\nCDK (TypeScript) constructs for the read path per sections 5, 12.3: proof-server Lambda with provisioned concurrency, and a CloudFront distribution fronting S3 tiles and the Lambda. Synth assertions only, no cloud deploy (section 1 non-goals).\n\n## Acceptance Criteria\n- PR1 `ProofServerLambda` construct: Rust Lambda packaging hook, provisioned concurrency configured (12.3), IAM policy contains only read actions on the log bucket and DDB table, env wiring for bucket/table names, instantiable per-region (primary and standby both serve proofs, 12.2)\n- PR2 `ReadPathDistribution` construct: S3 origin for `tiles/`, `entries/`, `checkpoints/` and Lambda origin for `/v1/*`; cache behaviors assert long-TTL immutable for tile/entry paths and short TTL for latest-checkpoint and revocation paths (8.1, 16.2)\n- Fine-grained `aws-cdk-lib/assertions` tests for every claim above; `cdk synth` of the read-path stack green in CI\n\n## Out of Scope\n- CDK app skeleton, pipelines, account bootstrap (foundation-infra)\n- Revocation push-notification wiring (revocation epic)\n- Any actual deployment or AWS spend\n\n## Testing\nUnit (CDK synth fine-grained assertions) only, per calibration.\n\n## Demo\n`npx cdk synth ReadPathStack` renders the template; `npm test` shows assertion suite green.",
+      "size": "M",
+      "priority": 2,
+      "phase": 4,
+      "deps": [
+        "cdk-skeleton"
+      ],
+      "labels": [
+        "read-path",
+        "cdk",
+        "infra"
+      ]
+    },
+    {
+      "slug": "read-local-serving",
+      "title": "Wire proof-server into the local demo environment (CloudFront stand-in)",
+      "description": "## Goal\nMake the read path part of the 60-second demo (section 18.1): proof-server runs as a local process in `make demo`, with direct LocalStack S3 tile access standing in for CloudFront.\n\n## Acceptance Criteria\n- `make demo` starts proof-server on a documented port, wired to LocalStack S3/DDB via the cloud-aws env config (section 9.4)\n- Local-mode tile fetch path documented, including what CloudFront would add in AWS (12.3)\n- `make doctor` (18.8) checks the proof-server health endpoint\n- Smoke check in the demo pipeline: after the sample ACME client issues certs, `curl` of `/v1/proof/0` returns a proof that verifies\n- Works on a laptop with zero cloud credentials\n\n## Out of Scope\n- Multi-region demo wiring (`make demo-multiregion`, multi-region epic)\n- A local caching proxy container emulating CloudFront TTLs (nice-to-have, not required)\n\n## Testing\nIntegration/E2E smoke inside the demo environment (section 19.1).\n\n## Demo\n`make demo`, then `curl localhost:<port>/v1/checkpoint/latest` returns the signed checkpoint.",
+      "size": "S",
+      "priority": 1,
+      "phase": 4,
+      "deps": [
+        "localstack-dev-env",
+        "read-proof-server-lambda"
+      ],
+      "labels": [
+        "read-path",
+        "dev-experience"
+      ]
+    },
+    {
+      "slug": "read-verify-core",
+      "title": "Relying-party verification core: leaf hash, proof application, checkpoint signature",
+      "description": "## Goal\nA minimal-dependency `mtc-verify` crate implementing spec 12.1 steps 4-6: reconstruct the leaf hash from `TBSCertificate`, apply the inclusion proof to compute the expected subtree root, and verify the CA checkpoint signature (ECDSA P-256 in v1, section 4; no cosigners, section 1).\n\n## Acceptance Criteria\n- `verify_inclusion(entry, proof, checkpoint, ca_pubkey) -> Result<Verified, VerifyError>` with no service/storage dependencies, embeddable in RP code\n- `VerifyError` enumerates distinct failure reasons (wrong root, bad signature, malformed proof, size mismatch) to feed the failure-breakdown telemetry (section 20.2)\n- Never panics on adversarial input: tampered proofs, truncated hashes, absurd sizes all return errors (19.8)\n- Uses the domain-separated hashing from tree-primitives; leaf/interior separation asserted (19.2)\n- Property test: proofs generated by tree-primitives for arbitrary trees verify; any single-bit mutation of proof, entry, or root fails\n\n## Out of Scope\n- X.509 parsing and path validation (read-verify-cert)\n- Landmark/signatureless mode (read-verify-signatureless)\n- ML-DSA (feature-gated, core-mtc-library owns qux-pqc integration)\n\n## Testing\nUnit, property (19.2), adversarial fixtures (19.8); fuzzing follows in read-fuzz-verify.\n\n## Demo\n`cargo test -p mtc-verify`; doctest example verifies a fixture proof end-to-end.",
+      "size": "M",
+      "priority": 0,
+      "phase": 4,
+      "deps": [
+        "tree-primitives",
+        "mtc-serialization",
+        "core-mtc-types"
+      ],
+      "labels": [
+        "read-path",
+        "rust",
+        "security"
+      ]
+    },
+    {
+      "slug": "read-verify-cert",
+      "title": "Certificate-level verification: parse, revocation check, X.509 path composition",
+      "description": "## Goal\nComplete the relying-party flow (spec 12.1 steps 1-3 and 7): parse the certificate, check `signatureAlgorithm == id-alg-mtcProof`, decode `signatureValue` as `MTCProof`, check `serialNumber` against the revoked-ranges list (16.1), run standard X.509 path validation, and compose with read-verify-core into one `verify_certificate` entry point.\n\n## Acceptance Criteria\n- Accepts DER and PEM; wrong `signatureAlgorithm` yields a typed error (step 1)\n- Revocation check against `RevocationList` (start,end) ranges including boundary indices, with a configurable max-list-age policy (16.1, 16.2)\n- X.509 path validation via an established crate, with the MTC proof replacing per-cert signature verification (step 7)\n- `verify_certificate` returns the same `VerifyError` reason taxonomy as the core\n- Fixture tests: valid cert passes; revoked cert fails; revoked-then-reissued index fails per 19.6\n- Delivered as 2-3 PRs: (1) parse/extract, (2) revocation check, (3) path-validation composition\n\n## Out of Scope\n- Revocation list generation/signing (revocation epic)\n- Signatureless mode (read-verify-signatureless)\n\n## Testing\nUnit, property (range boundary conditions), adversarial fixtures kept as regression corpus (19.3).\n\n## Demo\n`cargo run -p mtc-verify --example verify-cert -- cert.pem` against a demo-issued cert prints step-by-step PASS.",
+      "size": "M",
+      "priority": 1,
+      "phase": 4,
+      "deps": [
+        "read-verify-core"
+      ],
+      "labels": [
+        "read-path",
+        "rust",
+        "security"
+      ]
+    },
+    {
+      "slug": "read-verify-signatureless",
+      "title": "Signatureless verification via predistributed landmarks",
+      "description": "## Goal\nImplement spec 12.1 step 6-prime: verify the computed subtree root against a predistributed landmark hash instead of a checkpoint signature — the signatureless optimization that motivates MTC (sections 1, 2).\n\n## Acceptance Criteria\n- `LandmarkSet` type loadable from a file (format documented); `verify_signatureless(entry, proof, landmarks)` matches the computed subtree root against a landmark\n- Unknown/expired landmark returns a typed error signaling fallback-to-full verification, so the signatureless-to-full fallback rate is observable (section 20.2)\n- Landmark age exposed on success for landmark-age telemetry (20.2, OQ-4)\n- Helper to derive a `LandmarkSet` from a checkpoint + log state for demo/test use\n- Property test: a landmark derived from any subtree verifies every entry inside that subtree and rejects every entry outside it\n\n## Out of Scope\n- Landmark publication cadence and distribution channel (CA service/observability; OQ-4 says start hourly)\n- Full-mode verification (read-verify-core)\n\n## Testing\nUnit, property (19.2).\n\n## Demo\nExample: derive landmarks from the demo log, then verify a demo-issued cert with no signature check and print the landmark age.",
+      "size": "S",
+      "priority": 1,
+      "phase": 4,
+      "deps": [
+        "read-verify-core"
+      ],
+      "labels": [
+        "read-path",
+        "rust",
+        "security"
+      ]
+    },
+    {
+      "slug": "read-cli-inclusion",
+      "title": "mtcctl log inclusion: generate and verify an inclusion proof",
+      "description": "## Goal\nImplement `mtcctl log inclusion` (spec 17.3): generate the inclusion proof for an index and verify it locally, matching the 19.13 usage pattern.\n\n## Acceptance Criteria\n- `mtcctl log inclusion --index N` prints a human-readable proof summary (checkpoint size, path length, verified status)\n- `--output json` emits `{verified, proof_b64, checkpoint, index}` so `jq .verified` works verbatim per 19.13\n- Non-zero exit code when the proof does not verify or the index is out of range\n- Reads storage directly via the proof-generation core, so it works against `make demo` LocalStack state without the HTTP server\n- Unit tests plus a golden-JSON output test\n\n## Out of Scope\n- `log verify` (read-cli-verify) and `log consistency` (read-cli-consistency)\n- Fetching via the HTTP proof-server (E2E covers that path)\n\n## Testing\nUnit; E2E arrives in read-e2e-issue-verify (19.13).\n\n## Demo\n`make demo`, then `mtcctl log inclusion --index 0 --output json | jq .verified` prints `true`.",
+      "size": "S",
+      "priority": 1,
+      "phase": 4,
+      "deps": [
+        "read-proof-gen-core",
+        "read-verify-core",
+        "EXTERNAL:mtcctl CLI scaffolding (clap v4 command tree, foundation-infra Phase 0)"
+      ],
+      "labels": [
+        "read-path",
+        "cli"
+      ]
+    },
+    {
+      "slug": "read-cli-verify",
+      "title": "mtcctl log verify: verify a certificate against the log",
+      "description": "## Goal\nImplement `mtcctl log verify` (spec 17.3): verify a certificate PEM against the log using the mtc-verify library, in both full and signatureless modes.\n\n## Acceptance Criteria\n- `mtcctl log verify --pem cert.pem` prints each 12.1 step with PASS/FAIL and an overall verdict\n- `--signatureless --landmarks FILE` exercises step 6-prime\n- `--output json` includes the `VerifyError` failure-reason enum for scripting and telemetry (20.2)\n- Distinct non-zero exit codes for revoked vs proof-invalid vs parse failure\n- Unit tests with fixture certs: valid, tampered proof, revoked serial\n\n## Out of Scope\n- Cert issuance (`mtcctl cert issue`, ca-service/admin-surface)\n- Revocation management commands (revocation epic)\n\n## Testing\nUnit with fixtures; E2E in read-e2e-issue-verify (19.13).\n\n## Demo\nAfter `make demo` issues certs: `mtcctl log verify --pem /tmp/cert.pem` shows all seven 12.1 steps passing.",
+      "size": "S",
+      "priority": 1,
+      "phase": 4,
+      "deps": [
+        "read-verify-cert",
+        "read-verify-signatureless",
+        "EXTERNAL:mtcctl CLI scaffolding (clap v4 command tree, foundation-infra Phase 0)"
+      ],
+      "labels": [
+        "read-path",
+        "cli"
+      ]
+    },
+    {
+      "slug": "read-consistency-gen",
+      "title": "Consistency proof generation: planner extension and service method",
+      "description": "## Goal\nExtend the proof pipeline with consistency proofs between two tree sizes, generated from stored tiles and checkpoints, backing `mtcctl log consistency` (17.3) and the 19.2 consistency property.\n\n## Acceptance Criteria\n- `plan_consistency(old_size, new_size) -> Result<TilePlan, PlanError>` added to the tile planner\n- `ProofService::consistency_proof(old_size, new_size)` fetches tiles via the storage facade and returns the serialized proof plus both checkpoints when stored\n- Typed errors for `old > new`, either size exceeding the latest checkpoint, and size 0; no panics on any input\n- Property test: for arbitrary valid size pairs, hashes extracted per the plan reproduce the tree-primitives consistency proof and the proof verifies (19.2 'consistency proofs verify between any two tree sizes')\n- Unit tests at tile boundaries: (256,512), (255,257), (1,256), and equal sizes\n\n## Out of Scope\n- CLI command (read-cli-consistency)\n- Self-auditor scheduled consistency checking (observability epic)\n- Inclusion proofs (read-proof-gen-core)\n\n## Testing\nUnit + property on the memory backend (19.2); one LocalStack integration case added to the existing suite (19.1).\n\n## Demo\nWith `make demo` state: `cargo run -p mtc-read --example gen-consistency -- --old 256 --new 512` prints a verified proof.",
+      "size": "S",
+      "priority": 2,
+      "phase": 4,
+      "deps": [
+        "read-proof-gen-core"
+      ],
+      "labels": [
+        "read-path",
+        "rust"
+      ]
+    },
+    {
+      "slug": "read-cli-consistency",
+      "title": "mtcctl log consistency: consistency proofs between tree sizes",
+      "description": "## Goal\nImplement `mtcctl log consistency` (spec 17.3): generate and verify a consistency proof between two tree sizes, supporting audit-style inspection of append-only growth.\n\n## Acceptance Criteria\n- `mtcctl log consistency --old N --new M` prints a proof summary and verified status\n- `--output json` emits `{verified, proof_b64, old_size, new_size}` so `jq .verified` works (17.3 output formats)\n- Non-zero exit when the proof fails to verify; distinct exit code and message for out-of-range sizes or `old > new`\n- Reads storage directly via the consistency generation core, working against `make demo` LocalStack state without the HTTP server\n- Unit tests plus a golden-JSON output test\n\n## Out of Scope\n- Consistency proof generation internals (read-consistency-gen)\n- Inclusion proof CLI (read-cli-inclusion)\n- Self-auditor scheduling (observability epic)\n\n## Testing\nUnit with fixtures (19.1); follows the 19.13 CLI-driven E2E pattern.\n\n## Demo\n`make demo` until two checkpoints exist, then `mtcctl log consistency --old 256 --new 512 --output json | jq .verified` prints `true`.",
+      "size": "S",
+      "priority": 2,
+      "phase": 4,
+      "deps": [
+        "read-consistency-gen",
+        "EXTERNAL:mtcctl CLI scaffolding (clap v4 command tree, foundation-infra Phase 0)"
+      ],
+      "labels": [
+        "read-path",
+        "cli"
+      ]
+    },
+    {
+      "slug": "read-fuzz-verify",
+      "title": "Structured fuzzing of the verification path",
+      "description": "## Goal\nSpec 19.3 Layer 3 for the read path: the verification code must never panic on structurally plausible but semantically invalid inputs — the class of bugs byte-level fuzzing misses.\n\n## Acceptance Criteria\n- cargo-fuzz target `verify_proof` using an `arbitrary`-derived `ArbitraryProofInput` (semi-valid proofs, entries, checkpoints); harness asserts no panic and no unbounded allocation (19.3 properties)\n- Second target feeding raw bytes through the MTCProof parse -> verify pipeline end to end\n- Seed corpus checked in under `fuzz/corpus/` (19.3 corpus management)\n- Bounded-iteration fuzz smoke run wired into CI; any crash input minimized and added as a permanent unit regression test\n\n## Out of Scope\n- Byte-level parse fuzz targets for spec types (`Checkpoint`, `Tile`, etc. — core-mtc-library owns 19.3 Layer 2)\n- Nightly differential fuzzing (read-differential-verify covers differential)\n\n## Testing\nFuzz (cargo-fuzz) + unit regression fixtures (19.3).\n\n## Demo\n`cargo fuzz run verify_proof -- -runs=10000` completes with zero crashes.",
+      "size": "S",
+      "priority": 2,
+      "phase": 4,
+      "deps": [
+        "read-verify-core"
+      ],
+      "labels": [
+        "read-path",
+        "testing",
+        "security"
+      ]
+    },
+    {
+      "slug": "read-differential-verify",
+      "title": "Differential verification against the bwesterb/mtc Go reference",
+      "description": "## Goal\nSpec 19.5: run every certificate through two independent verification paths — our mtc-verify (Path A) and a Go binary wrapping bwesterb/mtc (Path B) — and fail on any disagreement, catching symmetric issue/verify bugs.\n\n## Acceptance Criteria\n- Harness shells out to the Go reference wrapper from the conformance suite and asserts verdict agreement per 19.3 Layer 4 semantics (both-accept requires structural agreement; both-reject is fine; splits fail)\n- Runs over the fixture corpus plus demo-issued certs\n- Divergence output is actionable: input hexdump, both verdicts, parsed structures\n- Wired as a nightly CI job (19.3 notes cross-language tooling cost), also runnable locally behind a `differential` feature\n\n## Out of Scope\n- Differential parsing of individual spec types (core-mtc-library conformance suite)\n- Building/vendoring the Go wrapper itself (external dep)\n\n## Testing\nDifferential/integration (19.5); nightly CI.\n\n## Demo\n`cargo test --features differential -p mtc-verify` runs the corpus with zero mismatches; `make test-conformance` includes it.",
+      "size": "S",
+      "priority": 2,
+      "phase": 4,
+      "deps": [
+        "read-verify-cert",
+        "EXTERNAL:bwesterb/mtc Go reference wrapper binary (core-mtc-library conformance suite)"
+      ],
+      "labels": [
+        "read-path",
+        "testing"
+      ]
+    },
+    {
+      "slug": "read-e2e-issue-verify",
+      "title": "E2E shell test: issue, fetch proof, verify via CLI and HTTP",
+      "description": "## Goal\nThe canonical read-path E2E from spec 19.13: a shell script driving mtcctl against the full demo environment, covering issue -> proof -> verify including the served HTTP path.\n\n## Acceptance Criteria\n- `tests/e2e/issuance-and-verification.sh`: issue a cert via `mtcctl cert issue`, look up its index, run `mtcctl log inclusion --output json | jq .verified` asserting `true` (19.13 verbatim), then `mtcctl log verify --pem` asserting success\n- Additionally curls the local proof-server `/v1/proof/{index}` and verifies the returned proof, exercising the served path\n- Negative case: a tampered PEM makes `log verify` exit non-zero\n- Wired into `make test-e2e` (18.8) and green in CI against the LocalStack demo\n\n## Out of Scope\n- Revocation and pruning E2E scenarios (their epics)\n- Multi-region failover E2E (multi-region epic)\n\n## Testing\nE2E (19.1, 19.13); shell driving mtcctl.\n\n## Demo\n`make test-e2e` lists `issuance-and-verification.sh` passing.",
+      "size": "S",
+      "priority": 1,
+      "phase": 4,
+      "deps": [
+        "read-cli-inclusion",
+        "read-cli-verify",
+        "read-local-serving",
+        "EXTERNAL:single-region issuance demo with mtcctl cert issue (ca-service)"
+      ],
+      "labels": [
+        "read-path",
+        "testing",
+        "e2e"
+      ]
+    },
+    {
+      "slug": "read-bench-proof",
+      "title": "Benchmarks: proof generation latency, verification throughput, proof size budget",
+      "description": "## Goal\nCriterion benchmarks establishing the read-path performance baseline for later regression tracking (spec 19.11), plus an assertion on the compact-proof promise (~736 bytes, section 2).\n\n## Acceptance Criteria\n- Benches: inclusion proof generation over memory-backend fixture trees at 2^10 and 2^20 leaves; `verify_inclusion` throughput\n- Unit test asserts serialized MTCProof size for a 2^20-leaf tree is <= 1024 bytes, with the budget constant documented against the ~736-byte figure in section 2\n- Wired into `make bench` (18.8) with results printed in a comparable format\n- Runs on a laptop in under a few minutes; no LocalStack required\n\n## Out of Scope\n- CI performance-regression gating and history tracking (testing-infra, Phase 8)\n- Lambda cold-start measurement (needs real AWS; excluded per section 1 non-goals)\n\n## Testing\nBench (criterion) + one unit size assertion.\n\n## Demo\n`make bench` prints the proof-gen and verify tables with the size assertion passing.",
+      "size": "S",
+      "priority": 3,
+      "phase": 4,
+      "deps": [
+        "read-proof-gen-core",
+        "read-verify-core"
+      ],
+      "labels": [
+        "read-path",
+        "testing",
+        "performance"
+      ]
+    },
+    {
+      "slug": "read-docs-rp-guide",
+      "title": "Relying-party integration guide and read-path API docs",
+      "description": "## Goal\nDocumentation the spec assigns alongside implementation (25.6 'Documentation vs Implementation' parallel track): how a relying party verifies MTC certificates and how to consume the read-path API.\n\n## Acceptance Criteria\n- `docs/read-path.md`: narrative walkthrough of the 12.1 verification flow (full and signatureless), endpoint table for the proof-server routes, and a worked mtc-verify code example\n- Rustdoc on the mtc-verify public API with compile-tested examples (`cargo test --doc` green)\n- Notes on caching semantics and why tiles are immutable (8.1, 12.3)\n- Linked from the repo README/docs index\n\n## Out of Scope\n- Runbooks (observability/operational epics, section 21.2)\n- Admin API docs (admin-surface)\n\n## Testing\nDoc tests (`cargo test --doc`); markdown lint via CI baseline.\n\n## Demo\n`cargo doc -p mtc-verify --open` shows the documented API; `docs/read-path.md` renders with the worked example.",
+      "size": "S",
+      "priority": 2,
+      "phase": 4,
+      "deps": [
+        "read-verify-cert",
+        "read-proof-server-lambda"
+      ],
+      "labels": [
+        "read-path",
+        "docs"
+      ]
+    }
+  ]
+}

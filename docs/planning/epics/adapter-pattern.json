@@ -1,0 +1,149 @@
+{
+  "epic": {
+    "slug": "adapter-pattern",
+    "title": "Adapter Pattern (post-v1)",
+    "description": "Post-v1 implementations of the issuance adapter pattern (spec §10, roadmap Phase 9): an AWS Private CA adapter, a reference adapter SDK for third-party CAs, and the adapter health/observability and admin surface (CLI + UI + chaos/runbook obligations). Everything builds strictly on the v1 EntryIntake seam owned by ca-service (anchor entry-intake-trait, §10.2) — no ticket here redefines that trait. Per §1 non-goals (no production cloud spend) everything runs on a laptop against LocalStack and the local demo environment; CDK work is validated by `cdk synth` assertions only, and real-AWS validation is explicitly out of scope. All tickets are priority 3, phase 9."
+  },
+  "tickets": [
+    {
+      "slug": "adapt-sdk-core",
+      "title": "Reference adapter SDK core crate (adapter-sdk)",
+      "description": "## Goal\nCreate `crates/adapter-sdk/`, the reference SDK third-party CA adapters build on (§10, §24 Phase 9). Provides the `Adapter` trait, a runtime harness for event-driven and polling sources, idempotent retry, a policy hook, and submission via the v1 `EntryIntake` seam (§10.2). This ticket consumes that seam; it does not modify it.\n\n## Acceptance Criteria\n- New `crates/adapter-sdk/` exposing an `Adapter` trait covering the §10.3 responsibilities: source subscription (event-driven or polling), policy decision hook, entry construction, submission, and source-specific retry/idempotency\n- Runtime harness runs any `Adapter` as a long-lived task with graceful shutdown and backoff on source errors\n- All submissions flow through the v1 `EntryIntake` interface with `source_type`/`source_id` populated for audit traceability (§10.2); resubmitting the same `source_id` is idempotent (no duplicate entries)\n- Adapter registry holds heterogeneous adapters as `Vec<Arc<dyn Adapter>>` per §22.7 dispatch guidance\n- Unit tests against an in-memory `EntryIntake` stub: happy path, transient-error retry, `source_id` dedup, policy rejection\n\n## Out of Scope\n- X.509 re-encoding helpers (adapt-x509-reencode)\n- AWS PCA adapter, metrics/health surface, admin commands (separate tickets)\n- Any change to the `EntryIntake` trait itself (owned by ca-service, v1)\n\n## Testing\n- Unit (in-memory stub, §19.1); property test (proptest, §19.2 style): arbitrary crash/retry interleavings never produce duplicate submissions for one `source_id`\n\n## Demo\n`cargo test -p adapter-sdk`; then `make demo` with the bundled no-op adapter submitting a canned entry, visible via `mtcctl batch list`.",
+      "size": "M",
+      "priority": 3,
+      "phase": 9,
+      "deps": [
+        "entry-intake-trait",
+        "core-mtc-types"
+      ],
+      "labels": [
+        "post-v1",
+        "adapters",
+        "sdk"
+      ]
+    },
+    {
+      "slug": "adapt-x509-reencode",
+      "title": "X.509 to TBSCertificateLogEntry re-encoding helpers",
+      "description": "## Goal\nLibrary helpers that re-encode an existing X.509 certificate from a source CA into a spec-compliant `TBSCertificateLogEntry` (§10.1, §10.3 responsibility 3) — the Cloudflare-playground pattern of logging existing certs as MTC entries. Lives in `crates/adapter-x509/` so it parallelizes with adapt-sdk-core.\n\n## Acceptance Criteria\n- Function mapping an X.509 cert (DER and PEM) — subject, SANs, validity, SPKI — into MTC assertion/claim types from core-mtc-types\n- Unsupported or unmappable certs return typed errors; no panics on any input\n- Round-trip: produced entries satisfy `parse(serialize(x)) == x` via mtc-serialization (§19.2)\n- Fixture corpus: RSA and ECDSA certs, multiple DNS SANs, IP SANs, edge-case validity windows\n- Fuzz target on the X.509 ingestion path per §19.3 (parser never panics on arbitrary bytes), wired into the existing `fuzz/corpus/` layout\n\n## Out of Scope\n- Policy decisions about which certs to log (SDK policy hook)\n- Source CA connectivity, authentication, event handling\n\n## Testing\n- Unit, property (round-trip, §19.2), fuzz (§19.3)\n\n## Demo\n`cargo run -p adapter-x509 --example reencode < fixtures/example.pem` prints the resulting TBSCertificateLogEntry as JSON.",
+      "size": "M",
+      "priority": 3,
+      "phase": 9,
+      "deps": [
+        "core-mtc-types",
+        "mtc-serialization"
+      ],
+      "labels": [
+        "post-v1",
+        "adapters"
+      ]
+    },
+    {
+      "slug": "adapt-sdk-example-docs",
+      "title": "Example dir-watch adapter + add-adapter guide",
+      "description": "## Goal\nProve the SDK's public API with a minimal reference adapter — watches a local directory for PEM files, re-encodes them, submits to the log — and ship the \"add a new external CA adapter\" guide the spec calls for (§23.1 `add-adapter.md` seeded skill; §25.7 dev-experience tickets are first-class).\n\n## Acceptance Criteria\n- Example adapter built purely on the public adapter-sdk API (no internal imports), demonstrating each §10.3 responsibility\n- Dropping a PEM into the watched directory yields a logged entry with `source_type=\"example-dir\"` and traceable `source_id` (§10.2)\n- `docs/add-adapter.md` and `.claude/skills/add-adapter.md` walk through building an adapter end-to-end using the example as the template (§23.1)\n- `make demo-adapter` target wires the example adapter into the local dev environment (§18)\n- E2E test: drop cert fixture, entry appears in a batch, inclusion proof verifies\n\n## Out of Scope\n- Production sources (AWS PCA, Cloudflare, Keyfactor)\n- Adapter pause/metrics/UI (separate tickets)\n\n## Testing\n- Unit; E2E via CLI driving the demo environment (§19.13)\n\n## Demo\n`make demo-adapter`, copy `fixtures/example.pem` into the watch dir, then `mtcctl cert lookup` shows the entry with its adapter source fields.",
+      "size": "M",
+      "priority": 3,
+      "phase": 9,
+      "deps": [
+        "adapt-sdk-core",
+        "adapt-x509-reencode",
+        "localstack-dev-env"
+      ],
+      "labels": [
+        "post-v1",
+        "adapters",
+        "docs",
+        "dev-experience"
+      ]
+    },
+    {
+      "slug": "adapt-aws-pca",
+      "title": "AWS Private CA adapter (Lambda handler)",
+      "description": "## Goal\nImplement the first real adapter (§24 Phase 9; OQ-12 selects AWS Private CA as lowest-friction): consume PCA issuance events, fetch the issued cert, apply policy, re-encode, and submit via EntryIntake. Runs as a Lambda per §10.3 (event-driven source) and §5 compute table (\"Adapter services | Lambda or Fargate\").\n\n## Acceptance Criteria\n- Lambda handler consumes EventBridge PCA issuance events (CloudTrail `IssueCertificate` pattern), fetches the cert via `GetCertificate`, and applies the SDK policy hook\n- Re-encodes via adapter-x509; submits with `source_type=\"aws-pca-adapter\"` and `source_id` = certificate ARN (§10.2)\n- Idempotent on redelivered events: the same ARN is never logged twice (§10.3)\n- Authenticates with short-lived IAM credentials (§10.3); no long-lived secrets in code or config\n- Transient `GetCertificate` errors retried with backoff; poison events routed to a DLQ path with a failure metric\n- Integration tests run against LocalStack with synthetic EventBridge fixtures and stubbed PCA responses — no real AWS (§1 non-goals)\n\n## Out of Scope\n- CDK infrastructure (adapt-aws-pca-cdk)\n- Cloudflare/Keyfactor/EJBCA adapters; health UI\n\n## Testing\n- Unit (policy, idempotency, error mapping); integration against LocalStack (§19.1); E2E in demo env (§19.13)\n\n## Demo\n`make demo` then `scripts/simulate-pca-issue.sh` injects a synthetic issuance event; `mtcctl batch list` shows the new entry sourced from aws-pca-adapter.",
+      "size": "M",
+      "priority": 3,
+      "phase": 9,
+      "deps": [
+        "adapt-sdk-core",
+        "adapt-x509-reencode",
+        "localstack-dev-env"
+      ],
+      "labels": [
+        "post-v1",
+        "adapters",
+        "aws"
+      ]
+    },
+    {
+      "slug": "adapt-aws-pca-cdk",
+      "title": "CDK construct for PCA adapter (synth assertions only)",
+      "description": "## Goal\nCDK (TypeScript) construct wiring the PCA adapter as spec'd (§5 compute table: adapter services on Lambda; §10.3 event-driven source): EventBridge rule on PCA issuance events, Lambda, DLQ, least-privilege IAM. Laptop-only per §1 non-goals — validated via `cdk synth` assertions, never deployed.\n\n## Acceptance Criteria\n- Construct in the CDK app composing: EventBridge rule (CloudTrail `IssueCertificate` pattern) -> PCA adapter Lambda -> SQS DLQ\n- IAM role limited to `acm-pca:GetCertificate` plus intake-submission permissions; no wildcard resources\n- Adapter stack is opt-in via CDK context flag (post-v1 feature, off by default; default synth output unchanged)\n- Jest assertion tests verify the event pattern, DLQ wiring, environment config, and least-privilege policy statements\n\n## Out of Scope\n- Deployment to real AWS; any AWS spend\n- The Lambda application code itself (adapt-aws-pca)\n\n## Testing\n- CDK synth assertion unit tests (jest) per project calibration; no integration layer (no real AWS, §1)\n\n## Demo\n`npm test` in the CDK app passes; `cdk synth --context enablePcaAdapter=true` renders the adapter stack to the terminal.",
+      "size": "S",
+      "priority": 3,
+      "phase": 9,
+      "deps": [
+        "cdk-skeleton",
+        "adapt-aws-pca"
+      ],
+      "labels": [
+        "post-v1",
+        "adapters",
+        "cdk"
+      ]
+    },
+    {
+      "slug": "adapt-health-metrics",
+      "title": "Adapter health and metrics surface",
+      "description": "## Goal\nBuild the adapter health/observability surface (§24 Phase 9): per-adapter intake counts, success rate, and lag (§20.3 Adapter activity report; §20.1 `entries_by_source_total` metric labeled by source_type), per-source intake rates for the log inventory dashboard (§20.2), and adapter registry health state exposed via an internal admin API route for health-style consumption (§17.2, §20.5).\n\n## Acceptance Criteria\n- SDK runtime emits per-adapter metrics: intake count, success/failure counts, policy-reject count, source lag, last-success timestamp (§20.1, §20.3)\n- Adapter registry exposes a health snapshot (running / paused / erroring, per-adapter rates) via an internal admin API route (§17.2) that the admin surface and health-style checks can read, following the §20.5 health-endpoint convention\n- Paused state is persisted so it survives service restart\n- Metrics flow into the local dev metrics view (§18) with per-source intake rates matching §20.2's always-visible dashboard list\n- Unit tests: emission on success, failure, and policy rejection; health state transitions including erroring -> running recovery\n\n## Out of Scope\n- CLI/UI rendering of this data (adapt-admin-surface)\n- Alerting/SLO thresholds (observability epic)\n\n## Testing\n- Unit; integration (§19.1): example adapter running in the demo env produces observable per-adapter metrics\n\n## Demo\nRun `make demo-adapter`, then curl the adapter-health API route: JSON shows per-adapter status, intake counts, and lag.",
+      "size": "M",
+      "priority": 3,
+      "phase": 9,
+      "deps": [
+        "adapt-sdk-core",
+        "EXTERNAL:metrics + health-endpoint conventions from self-auditor/observability epic"
+      ],
+      "labels": [
+        "post-v1",
+        "adapters",
+        "observability"
+      ]
+    },
+    {
+      "slug": "adapt-admin-surface",
+      "title": "mtcctl adapter commands, API routes, and Adapters UI page",
+      "description": "## Goal\nFull CLI/UI parity (§17.1) for adapter operations: `mtcctl adapter list|status|pause` (§17.3) and the Adapters UI view showing per-adapter health and intake rate (§17.4), backed by new admin API routes both consume (§17.5). Decomposes into ~2 shippable PRs: read routes (list/status) across API+CLI+UI, then the pause/resume mutation path.\n\n## Acceptance Criteria\n- Admin API routes (OpenAPI-first, through the §17.2/17.5 codegen pipeline) for adapter list, status, pause, and resume (resume complements the spec'd §17.3 pause); pause is privileged and honors `--confirm`/`--yes` semantics (§17.3)\n- `mtcctl adapter list` and `status` show per-adapter health, intake rate, and lag; `--output json` supported for agents (§17.3)\n- `mtcctl adapter pause <name>` halts that adapter's intake without losing already-queued entries; state visible in `status` and reversible via resume\n- Adapters UI page (htmx + Askama) renders per-adapter health and intake rate with SSE live updates (§17.4)\n- CLI and UI exercise the same API routes per the §17.5 end-to-end pattern\n- E2E: pause example adapter, drop a PEM (nothing logged), resume, entry logged\n\n## Out of Scope\n- Metric collection itself (adapt-health-metrics)\n- New adapter implementations\n\n## Testing\n- Unit (handlers, CLI arg parsing); integration; E2E via CLI (§19.13)\n\n## Demo\n`make demo-adapter`, open the Adapters UI page, then `mtcctl adapter pause example-dir --confirm` and watch status flip in both CLI and UI.",
+      "size": "M",
+      "priority": 3,
+      "phase": 9,
+      "deps": [
+        "admin-api-core",
+        "adapt-health-metrics"
+      ],
+      "labels": [
+        "post-v1",
+        "adapters",
+        "admin-surface"
+      ]
+    },
+    {
+      "slug": "adapt-flood-chaos",
+      "title": "chaos-adapter-flood scenario + adapter-flood runbook",
+      "description": "## Goal\nProve intake backpressure under adapter flood: implement the `chaos-adapter-flood` scenario (§19.9: \"Backpressure works; no entries lost\") and write the required adapter-flood runbook (§21.2).\n\n## Acceptance Criteria\n- Flood-generator adapter (built on adapter-sdk) drives EntryIntake at a configurable multiple of normal rate against the local demo environment\n- Scenario asserts backpressure engages: submitters receive throttle/retry errors rather than silent drops, and queue depth stays bounded\n- Scenario asserts zero loss: every accepted entry appears in a committed batch (accepted count == logged count)\n- Runs via the chaos harness make target and is registered in the scheduled CI chaos job (§19.9)\n- `docs/runbooks/adapter-flood.md` per §21.2 structure: detection signals (per-adapter lag and intake-rate metrics, §20.3), mitigation steps (`mtcctl adapter pause`), and recovery verification\n\n## Out of Scope\n- The chaos harness framework itself (testing-infrastructure epic)\n- Other chaos scenarios from the §19.9 table\n\n## Testing\n- Chaos/E2E (§19.9) in the demo env; unit tests for the flood generator's rate control\n\n## Demo\n`make chaos SCENARIO=adapter-flood` prints a report: backpressure engaged, accepted == logged, zero entries lost.",
+      "size": "S",
+      "priority": 3,
+      "phase": 9,
+      "deps": [
+        "adapt-sdk-core",
+        "adapt-admin-surface",
+        "EXTERNAL:chaos test harness from testing-infrastructure epic"
+      ],
+      "labels": [
+        "post-v1",
+        "adapters",
+        "chaos",
+        "runbook"
+      ]
+    }
+  ]
+}

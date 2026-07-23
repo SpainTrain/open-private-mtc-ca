@@ -1,0 +1,371 @@
+{
+  "epic": {
+    "slug": "observability",
+    "title": "Self-Auditor & Observability",
+    "description": "Deliver the full observability layer for the MTC CA per spec §20 and roadmap Phase 6: the P0 self-auditor Lambda that substitutes for external transparency in a cosigner-free deployment (§25.8), including anomaly-triggered issuance freeze; structured logging/tracing/metrics foundations; dashboards and SLO alarms as CDK code with synth assertions; per-cert forensics, signed compliance reports (`mtcctl report`) with a Reports UI view, tree visualization in the admin UI, and the §20.5 health endpoints. Everything runs on a laptop against the memory backend and LocalStack — no real AWS deployment (§1 non-goals). Runbooks are explicitly out of this epic (operational-tooling)."
+  },
+  "tickets": [
+    {
+      "slug": "obs-tracing-core",
+      "title": "Structured logging + OpenTelemetry tracing foundation (telemetry crate)",
+      "description": "## Goal\nCreate the shared telemetry crate providing the structured-logging and distributed-tracing foundation of §20.1: JSON `tracing` subscriber, standard fields, correlation IDs, redaction, and OTEL export.\n\n## Acceptance Criteria\n- `crates/telemetry` exposes an init API installing a `tracing-subscriber` with JSON output (bunyan-style per §20.1)\n- Every log entry carries the standard fields: `timestamp, level, message, service, region, correlation_id, log_id, epoch, batch_id` (§20.1)\n- Correlation ID generated at request entry and propagated through nested spans; spans emit structured timing data\n- Sensitive-data redaction: a marked-sensitive field provably never appears in captured output (unit test)\n- Optional OTEL layer via `tracing-opentelemetry` exporting OTLP, enabled by env config (§20.1); otel-collector service added to the dev compose\n- Cited types (`LogId`, `Epoch`, `BatchId`) come from core newtypes (§22)\n\n## Out of Scope\n- Metric registry/exporters (obs-metrics-core)\n- Instrumenting CA-service components (obs-service-instrumentation)\n\n## Testing\n- Unit: subscriber output captured and asserted (fields, redaction, correlation propagation)\n- Integration: OTLP spans received by local collector in compose (`--features integration`, §19.1)\n\n## Demo\n`make demo` then inspect JSON logs for standard fields; `docker compose logs otel-collector` shows exported spans.",
+      "size": "M",
+      "priority": 1,
+      "phase": 3,
+      "labels": [
+        "observability",
+        "telemetry",
+        "logging"
+      ],
+      "deps": [
+        "core-mtc-types",
+        "localstack-dev-env"
+      ]
+    },
+    {
+      "slug": "obs-metrics-core",
+      "title": "Metrics registry with Prometheus and CloudWatch EMF exporters",
+      "description": "## Goal\nProvide the typed metrics facade for the §20.1 metric set with Prometheus-compatible exposition and CloudWatch EMF emission, usable from Fargate services and Lambdas.\n\n## Acceptance Criteria\n- Typed constructors for all 13 metrics in the §20.1 table with correct instrument kinds (histogram/counter/gauge) and exact spec names\n- Label support, e.g. `entries_by_source_total{source_type}` (§20.1, §10)\n- Prometheus text exposition served at `/metrics` on an admin port\n- CloudWatch EMF JSON emitter behind config, compatible with LocalStack log ingestion (no real AWS spend, §1)\n- Metric-name constants exported from one module so dashboards/alarms (CDK) can assert against them\n- Unit tests: register → record → export round-trip for each instrument kind; names match spec table exactly\n\n## Out of Scope\n- Wiring metrics into CA service components (obs-service-instrumentation)\n- Dashboards/alarms (obs-cw-dashboards-slo-alarms)\n\n## Testing\n- Unit: registry, exporters, naming conformance (§19.1, no external deps); registry+Prometheus, EMF emitter, and /metrics endpoint land as separate PRs\n\n## Demo\nRun the demo env, `curl localhost:<admin-port>/metrics` shows the registered metric families.",
+      "size": "M",
+      "priority": 1,
+      "phase": 6,
+      "labels": [
+        "observability",
+        "metrics"
+      ],
+      "deps": []
+    },
+    {
+      "slug": "obs-service-instrumentation",
+      "title": "Instrument CA service pipeline with spans and §20.1 metrics",
+      "description": "## Goal\nWire the §20.1 span hierarchy and metric set into the CA write path so every issuance is traceable end-to-end.\n\n## Acceptance Criteria\n- Top-level `issue_batch` span contains nested `lease_check`, `allocate_indices`, `tree_update`, `hsm_sign`, `commit` spans (§20.1); correlation ID flows from intake to commit\n- Metrics emitted at the right sites: `issuance_latency_seconds`, `batch_commit_latency_seconds`, `hsm_signing_latency_seconds`, `batches_committed_total`, `batches_abandoned_total`, `entries_by_source_total{source_type}`\n- Lease/epoch metrics from the coordinator: `lease_renewals_total`, `lease_renewals_failed_total`, `epoch_advances_total` (§20.1)\n- Tile cache hit/miss counters instrumented in the storage facade (§20.1); replication-lag gauges emitted where measurable in local sim, stubs documented otherwise\n- Integration test: one issuance on memory backend asserts expected span tree and metric deltas\n\n## Out of Scope\n- Read-path (proof-server) instrumentation — read-path epic\n- Dashboards and alarms\n\n## Testing\n- Unit: span/metric emission with in-memory backend (§19.1)\n- Integration: LocalStack issuance produces spans + counters (`--features integration`)\n\n## Demo\n`make demo` issues certs; `curl /metrics` shows counters advancing; JSON logs show the nested `issue_batch` span timings.",
+      "size": "M",
+      "priority": 1,
+      "phase": 6,
+      "labels": [
+        "observability",
+        "metrics",
+        "tracing"
+      ],
+      "deps": [
+        "obs-tracing-core",
+        "obs-metrics-core",
+        "batch-builder",
+        "tree-updater",
+        "checkpoint-signer",
+        "lease-epoch-protocol",
+        "storage-facade-core"
+      ]
+    },
+    {
+      "slug": "obs-health-endpoints",
+      "title": "Health endpoints: /health/liveness, /readiness, /primary, /audit",
+      "description": "## Goal\nImplement the four §20.5 health endpoints on the CA service so ALB/Route 53 checks (§3) and operators get truthful process, readiness, primaryship, and audit status.\n\n## Acceptance Criteria\n- `GET /health/liveness` → 200 while the process runs\n- `GET /health/readiness` → 200 only when storage backends reachable and config loaded; 503 otherwise\n- `GET /health/primary` → JSON `{primary, epoch, region}` derived from lease state (§8.3); standby answers `primary:false` without erroring (§3 standby rejects writes, not health)\n- `GET /health/audit` → most recent `audit#{tree_size}` record summary from DDB (§8.2, §20.5); explicit `status: none` before first audit, `stale` past cadence threshold\n- All endpoints unauthenticated-safe: no sensitive data in bodies (§20.1)\n\n## Out of Scope\n- The self-auditor itself (obs-auditor-core); this only reads its records\n- Route 53/ALB CDK wiring — foundation-infra/multi-region epics\n\n## Testing\n- Unit: each endpoint against memory backend in every state (ready/not-ready/primary/standby/no-audit)\n- E2E: demo env `curl` of all four endpoints scripted in `tests/e2e/` (§19.13)\n\n## Demo\n`make demo` then `curl localhost:8080/health/readiness` and `/health/primary` show live status.",
+      "size": "S",
+      "priority": 1,
+      "phase": 5,
+      "labels": [
+        "observability",
+        "health"
+      ],
+      "deps": [
+        "lease-epoch-protocol",
+        "storage-facade-core",
+        "EXTERNAL:CA service axum HTTP server scaffold (ca-service epic)"
+      ]
+    },
+    {
+      "slug": "obs-auditor-core",
+      "title": "Self-auditor engine crate (audit algorithm + signed audit records)",
+      "description": "## Goal\nImplement the §20.2 self-auditor algorithm as a backend-agnostic library crate (`crates/auditor`) — the substitute for external transparency in our cosigner-free deployment (§25.8, P0).\n\n## Acceptance Criteria\n- One audit pass executes §20.2 steps 1–5: read latest checkpoint pointer; independently fetch tiles and recompute the root; verify the CA signature over the checkpoint; compare against prior audit records for append-only consistency; verify recent batches' entries are accessible and hash to the expected leaves\n- Step 6: signs an audit proof with a dedicated auditor key (distinct from the CA checkpoint key) via the `Hsm` trait and writes the `audit#{tree_size}` record (§8.2)\n- Result type is `Ok { tree_size, root }` or `Anomaly { reason }` with machine-readable reason classification; corrupt/truncated input never panics (§19.3 posture)\n- Runs entirely against storage traits: memory backend in unit tests, LocalStack in integration tests\n\n## Out of Scope\n- Lambda packaging/scheduling (obs-auditor-lambda)\n- Freeze/paging response (obs-audit-anomaly-freeze)\n- Adversarial fixture suite (obs-audit-adversarial-tests)\n\n## Testing\n- Unit: each audit step in isolation on memory backend\n- Property (`proptest`): audits of honestly-built logs of arbitrary size always pass (§19.2)\n- Integration: full pass against LocalStack S3/DDB (§19.1)\n\n## Demo\n`cargo run -p auditor --example audit-once` against the demo log prints the recomputed root and writes an audit record.",
+      "size": "M",
+      "priority": 0,
+      "phase": 6,
+      "labels": [
+        "observability",
+        "self-auditor",
+        "p0"
+      ],
+      "deps": [
+        "tree-primitives",
+        "mtc-serialization",
+        "storage-facade-core",
+        "cloud-abstraction-traits"
+      ]
+    },
+    {
+      "slug": "obs-auditor-lambda",
+      "title": "Self-auditor Lambda: packaging, EventBridge schedule, CDK construct",
+      "description": "## Goal\nShip the periodic self-auditor Lambda (§3 component table, §24 Phase 6): package the auditor engine for Lambda, schedule it, and define its infrastructure as CDK code validated by synth assertions.\n\n## Acceptance Criteria\n- `cargo-lambda`-built binary wrapping `obs-auditor-core` with the AWS backend; structured logs + audit-outcome metric emitted per run\n- CDK construct: EventBridge schedule (hourly default per OQ-8, configurable), least-privilege IAM (read tiles/checkpoints in S3, read/write `audit#` items in DDB), error alarm\n- `cdk synth` assertions cover schedule expression, env vars, and IAM policy — no real deployment (§1 non-goals)\n- Deploys and runs under LocalStack via the dev environment; an invoked run writes a fresh `audit#{tree_size}` record end-to-end\n\n## Out of Scope\n- Audit algorithm changes (obs-auditor-core)\n- Anomaly paging/freeze wiring (obs-audit-anomaly-freeze)\n\n## Testing\n- Unit: handler glue with memory backend\n- Integration: LocalStack Lambda invoke → record visible in DDB (`--features integration`, §19.1)\n- CDK synth assertion tests in TypeScript\n\n## Demo\n`make demo` then `awslocal lambda invoke` the auditor; `mtcctl audit history` (or DDB scan) shows the new audit record.",
+      "size": "M",
+      "priority": 0,
+      "phase": 6,
+      "labels": [
+        "observability",
+        "self-auditor",
+        "p0",
+        "cdk"
+      ],
+      "deps": [
+        "obs-auditor-core",
+        "aws-backend",
+        "cdk-skeleton",
+        "localstack-dev-env"
+      ]
+    },
+    {
+      "slug": "obs-audit-anomaly-freeze",
+      "title": "Anomaly response: page immediately and freeze issuance",
+      "description": "## Goal\nImplement the §20.2 mandate: on self-auditor anomaly, page immediately and freeze issuance until an operator intervenes.\n\n## Acceptance Criteria\n- Anomaly result writes an issuance-freeze flag item to the coordination table with epoch-conditioned write semantics (§8.2, §8.3)\n- Batch builder checks the flag before committing; when frozen, new batches are rejected with a distinct error and intake returns 503 (§20.2)\n- Paging path: shared alerting SNS topic construct + anomaly CloudWatch alarm defined in CDK with synth assertions (topic is reused by obs-cw-dashboards-slo-alarms); local dev emits a CRITICAL structured log and an SSE event to the UI (§17.4)\n- Privileged unfreeze exposed via admin API and `mtcctl` requiring `--confirm` (§17.3 authorization), recorded with operator identity for the admin-actions report (§20.3)\n- E2E: tamper a tile in the demo env → audit → issuance blocked → unfreeze → issuance resumes\n\n## Out of Scope\n- Anomaly-detection logic itself (obs-auditor-core)\n- The self-auditor-anomaly runbook (operational-tooling epic, §21)\n\n## Testing\n- Unit: flag write/read, batch-builder gate, unfreeze authorization\n- Integration: LocalStack freeze/unfreeze cycle\n- E2E: scripted tamper→freeze→unfreeze scenario in `tests/e2e/` (§19.13, §19.8)\n- CDK synth assertions for topic + alarm\n\n## Demo\n`make demo`, corrupt a tile via helper script, `make audit`, watch ACME issuance 503, then `mtcctl` unfreeze with `--confirm` restores issuance.",
+      "size": "M",
+      "priority": 0,
+      "phase": 6,
+      "labels": [
+        "observability",
+        "self-auditor",
+        "p0",
+        "alerting"
+      ],
+      "deps": [
+        "obs-auditor-core",
+        "batch-builder",
+        "admin-api-core",
+        "cdk-skeleton"
+      ]
+    },
+    {
+      "slug": "obs-audit-adversarial-tests",
+      "title": "Adversarial tamper-detection test suite for the self-auditor",
+      "description": "## Goal\nProve the self-auditor actually catches misbehavior: an adversarial fixture suite (§19.8) exercising every §20.2 detection obligation, since the auditor is the whole trust story without cosigners (§25.8).\n\n## Acceptance Criteria\n- Fixtures on the memory backend for: corrupted tile bytes; deleted/missing entry object; forked history (checkpoint inconsistent with prior audit record); invalid CA signature on checkpoint; rolled-back tree size; batch entry whose hash mismatches its leaf\n- Each fixture yields `Anomaly` with the correct reason classification — no silent pass, no panic\n- Property test: honestly-built random logs never flag (zero false positives); a random single-byte mutation within the recomputed range is always detected (§19.2)\n- Suite runs in CI in <30s with no external dependencies (§19.1)\n\n## Out of Scope\n- Chaos/fault-injection at the infrastructure level (testing-infrastructure epic, §19.9)\n- Fuzzing wire-format parsers (core-mtc-library epic, §19.3)\n\n## Testing\n- Unit + property + adversarial layers (§19.1, §19.2, §19.8); this ticket IS the test suite\n\n## Demo\n`cargo test -p auditor --test adversarial` shows each tamper class detected with its reason code.",
+      "size": "M",
+      "priority": 1,
+      "phase": 6,
+      "labels": [
+        "observability",
+        "self-auditor",
+        "testing"
+      ],
+      "deps": [
+        "obs-auditor-core",
+        "memory-backend"
+      ]
+    },
+    {
+      "slug": "obs-audit-cli",
+      "title": "Audit admin surface: mtcctl audit run/history/verify, UI audit page, make audit",
+      "description": "## Goal\nExpose the self-auditor to operators with full CLI/UI parity (§1 goals): `mtcctl audit` subcommands (§17.3), the Audit UI view (§17.4), and the `make audit` target (§18.8).\n\n## Acceptance Criteria\n- OpenAPI additions for trigger-run / list-history / get-record flowing through `make api-gen` (§17.5)\n- `mtcctl audit run` triggers an on-demand audit; `mtcctl audit history` lists `audit#` records; both support `--output json` (§17.3)\n- `mtcctl audit verify` runs the auditor engine client-side directly against storage — independent verification that does not trust the service (§17.3, §20.2)\n- UI audit page: history table, manual-run button, SSE-pushed new results (§17.4 key views)\n- `make audit` runs the self-auditor manually against the demo env (§18.8)\n- E2E shell test: issue → `make audit` → `mtcctl audit history` shows the new record\n\n## Out of Scope\n- Audit engine internals (obs-auditor-core); freeze/unfreeze op (obs-audit-anomaly-freeze)\n- Generic UI shell/navigation (admin-surface epic)\n\n## Testing\n- Unit: handlers and CLI arg parsing\n- E2E: CLI-driven scenario in `tests/e2e/` (§19.13)\n\n## Demo\n`make audit && mtcctl audit history --output json`; open the UI Audit page and click Run.",
+      "size": "M",
+      "priority": 1,
+      "phase": 6,
+      "labels": [
+        "observability",
+        "self-auditor",
+        "cli",
+        "ui"
+      ],
+      "deps": [
+        "obs-auditor-core",
+        "admin-api-core",
+        "EXTERNAL:admin UI shell (htmx/Askama/SSE base, admin-surface epic)"
+      ]
+    },
+    {
+      "slug": "obs-cert-forensics",
+      "title": "Per-certificate forensics: mtcctl cert lookup + cert UI view",
+      "description": "## Goal\nImplement §20.2 per-certificate forensics: a single lookup that reconstructs everything known about one issued cert, via API, CLI, and UI.\n\n## Acceptance Criteria\n- Admin API endpoint aggregating for an index: parsed TBSCert contents, batch info (ID, timestamp, `source_type`/`source_id`, region of primary at issuance — §8.2 batch item), covering checkpoint, revocation status, pruning status, source metadata (§20.2)\n- Revocation, pruning, and served-proof-audit-trail fields degrade to explicit `unavailable` until those subsystems ship — never fabricated\n- `mtcctl cert lookup --index N` human-readable and `--output json` (§17.3)\n- UI cert lookup view (§17.4 key views) rendering the same aggregation\n- E2E: issue via demo, look up index 0, TBSCert and batch fields match what was issued\n\n## Out of Scope\n- Served-proof audit trail collection (read-path epic emits it; this ticket only renders when present)\n- Revocation/pruning status sources (their epics)\n\n## Testing\n- Unit: aggregation against memory backend, including degraded fields\n- Integration: LocalStack-backed lookup\n- E2E: CLI scenario in `tests/e2e/` (§19.13)\n\n## Demo\n`make demo` then `mtcctl cert lookup --index 0` prints the full forensic record.",
+      "size": "M",
+      "priority": 1,
+      "phase": 6,
+      "labels": [
+        "observability",
+        "forensics",
+        "cli",
+        "ui"
+      ],
+      "deps": [
+        "admin-api-core",
+        "storage-facade-core",
+        "mtc-serialization",
+        "EXTERNAL:admin UI shell (htmx/Askama/SSE base, admin-surface epic)"
+      ]
+    },
+    {
+      "slug": "obs-tree-visualization",
+      "title": "Tree visualization in admin UI (SVG, SSE-updated)",
+      "description": "## Goal\nBuild the §20.2 tree visualization feature: an SVG render of recent tree state showing recent batches, landmark positions, pruning watermark, revoked ranges, and audit checkpoints.\n\n## Acceptance Criteria\n- Admin API data endpoint returning a bounded tree summary: recent batches with index ranges, landmark positions, pruning watermark, revoked ranges, audit checkpoints (§20.2)\n- SVG render via `templates/components/tree-viz.html` + vendored vanilla `static/tree-viz.js` — no build toolchain, assets embedded with `rust-embed` (§17.4)\n- Pruning/revocation/audit overlays degrade gracefully (layer hidden with a note) while those subsystems are unshipped\n- SSE-driven refresh when new batches or audit results land (§17.4 real-time updates)\n- Askama templates compile-time checked; endpoint payload size bounded for large trees\n\n## Out of Scope\n- Generic UI shell, layout, navigation (admin-surface epic)\n- Log inventory dashboard tiles (obs-log-inventory-dashboard)\n\n## Testing\n- Unit: summary endpoint against memory backend fixtures\n- E2E: demo env page load contains SVG nodes for committed batches; SSE event appends a batch (webapp test harness, §19.1)\n\n## Demo\n`make demo`, open the admin UI Tree view, issue certs, watch new batch nodes appear live.",
+      "size": "M",
+      "priority": 1,
+      "phase": 6,
+      "labels": [
+        "observability",
+        "ui",
+        "tree-viz"
+      ],
+      "deps": [
+        "admin-api-core",
+        "storage-facade-core",
+        "EXTERNAL:admin UI shell (htmx/Askama/SSE base, admin-surface epic)"
+      ]
+    },
+    {
+      "slug": "obs-log-inventory-dashboard",
+      "title": "Log inventory dashboard (UI): always-visible CA state",
+      "description": "## Goal\nImplement the §20.2 log inventory dashboard: the always-visible operational picture of the log in the admin UI.\n\n## Acceptance Criteria\n- Dashboard tiles for: tree size, total certs issued, currently-valid count, issuance/revocation rate, pruning watermark, storage size by category, per-source intake rates, active relying parties (§20.2)\n- Rates computed over a sliding window from metrics; storage sizes from the storage facade\n- Fields without a live source yet (revocation rate, pruning watermark, relying parties) show explicit `n/a — subsystem not deployed`\n- SSE updates push new values without polling (§17.4)\n- Aggregation logic unit-tested with synthetic state\n\n## Out of Scope\n- CloudWatch (cloud-side) dashboards (obs-cw-dashboards-slo-alarms)\n- Tree SVG visualization (obs-tree-visualization)\n- Generic dashboard page shell (admin-surface epic)\n\n## Testing\n- Unit: tile aggregation and rate windows (§19.1)\n- E2E: demo env dashboard reflects an issuance burst (§19.13)\n\n## Demo\n`make demo`, open the dashboard, run the issuance demo, watch tree size and intake rate tiles advance in real time.",
+      "size": "M",
+      "priority": 2,
+      "phase": 6,
+      "labels": [
+        "observability",
+        "ui",
+        "dashboard"
+      ],
+      "deps": [
+        "admin-api-core",
+        "storage-facade-core",
+        "obs-metrics-core",
+        "EXTERNAL:admin UI shell (htmx/Askama/SSE base, admin-surface epic)"
+      ]
+    },
+    {
+      "slug": "obs-cw-dashboards-slo-alarms",
+      "title": "CloudWatch dashboards and SLO burn-rate alarms as CDK code",
+      "description": "## Goal\nDefine the cloud-side observability surface as code: CloudWatch dashboards for the §20.1 metric set and alarm coverage for the five §20.1 SLOs, validated purely via `cdk synth` assertions (§1: no real deployment).\n\n## Acceptance Criteria\n- CDK dashboard constructs: service-health dashboard (latencies, lease, batch, cache metrics) and CA-specific dashboard (issuance by source, replication lag) using metric names imported/checked against the telemetry constants (obs-metrics-core)\n- Alarm set covering the §20.1 SLO table: ACME issuance success 99.9%, issuance p99 <10s, lease renewal 99.99%, HSM signing 99.9%, read-path availability 99.95% — multi-window burn-rate where applicable\n- All alarms route to the shared SNS alerting topic construct introduced by obs-audit-anomaly-freeze\n- Synth assertion tests verify widget metric names, alarm thresholds, and topic wiring; drift between Rust metric constants and CDK names fails CI\n\n## Out of Scope\n- In-app UI dashboards (obs-log-inventory-dashboard)\n- PagerDuty/real notification integrations (none — §1 non-goals)\n\n## Testing\n- CDK synth assertion tests (TypeScript unit layer, §19.1); no live AWS\n\n## Demo\n`cdk synth` renders dashboard/alarm JSON; `npm test` in `cdk/` passes the assertion suite.",
+      "size": "M",
+      "priority": 2,
+      "phase": 6,
+      "labels": [
+        "observability",
+        "cdk",
+        "slo",
+        "alerting"
+      ],
+      "deps": [
+        "cdk-skeleton",
+        "obs-metrics-core",
+        "obs-audit-anomaly-freeze"
+      ]
+    },
+    {
+      "slug": "obs-report-framework",
+      "title": "Compliance report framework: signed envelopes + issuance log report",
+      "description": "## Goal\nBuild the §20.3 compliance-reporting framework — signed report envelopes generated via `mtcctl report` — proven by the issuance-log report as its first vertical slice.\n\n## Acceptance Criteria\n- Report envelope: type, date range, generated-at, generator identity, content hash, signature by a **separate reporting key** (§20.3) held behind the `Hsm` trait (SoftHSM in dev)\n- Deterministic content ordering so identical inputs produce byte-identical signed reports\n- `mtcctl report issuance --from --to`: all certs in range with full audit trail and per-source segmentation (§20.3, §17.3)\n- `mtcctl report verify <file>` validates the signature and content hash; tampered reports fail (extension of the §17.3 report subcommands)\n- JSON output plus human-readable summary (§17.3 output formats)\n\n## Out of Scope\n- Other report generators (obs-report-audit-slo, obs-report-operational, obs-adapter-observability)\n- Reports UI view (obs-report-ui)\n- Reporting-key ceremony/rotation procedures (operational-tooling epic)\n\n## Testing\n- Unit: envelope signing/verification, deterministic serialization, issuance query against memory backend (§19.1)\n- E2E: issue → `mtcctl report issuance` → `verify` passes; byte-flip → `verify` fails (§19.13)\n\n## Demo\n`make demo`, then `mtcctl report issuance --from <t0> --to now | mtcctl report verify -` prints a valid signed report.",
+      "size": "M",
+      "priority": 1,
+      "phase": 6,
+      "labels": [
+        "observability",
+        "compliance",
+        "reports"
+      ],
+      "deps": [
+        "storage-facade-core",
+        "admin-api-core",
+        "softhsm-backend"
+      ]
+    },
+    {
+      "slug": "obs-report-ui",
+      "title": "Reports UI view: generate, download, and verify signed reports",
+      "description": "## Goal\nImplement the §17.4 \"Reports\" key UI view so operators can generate §20.3 compliance reports from the browser with CLI/UI parity (§17.1).\n\n## Acceptance Criteria\n- Reports page lists available report types from the §20.3 table with a date-range form; unavailable generators are shown disabled with a reason\n- Generate button calls the admin report API (same OpenAPI operations `mtcctl report` uses, §17.5); completion pushed via SSE (§17.4)\n- Completed report downloadable as its signed-envelope file; page shows the envelope's content hash and signature-verification status badge\n- Askama template compile-time checked; htmx-only, no build toolchain (§17.4)\n- E2E: generate an issuance report from the UI in the demo env and verify the downloaded file with `mtcctl report verify`\n\n## Out of Scope\n- Report generators and envelope format (obs-report-framework and successors)\n- Generic UI shell/navigation (admin-surface epic)\n\n## Testing\n- Unit: handler + template rendering against memory backend (§19.1)\n- E2E: webapp-driven generate/download verified via CLI (§19.13)\n\n## Demo\n`make demo`, open the Reports view, generate an issuance report, download it, `mtcctl report verify <file>` passes.",
+      "size": "S",
+      "priority": 2,
+      "phase": 6,
+      "labels": [
+        "observability",
+        "compliance",
+        "reports",
+        "ui"
+      ],
+      "deps": [
+        "obs-report-framework",
+        "EXTERNAL:admin UI shell (htmx/Askama/SSE base, admin-surface epic)"
+      ]
+    },
+    {
+      "slug": "obs-report-audit-slo",
+      "title": "Self-auditor history and SLO compliance reports",
+      "description": "## Goal\nAdd the §20.3 self-auditor-history and SLO-compliance report generators on top of the report framework.\n\n## Acceptance Criteria\n- Self-auditor history report: all `audit#` checkpoints in the date range with outcomes, tree sizes, roots (§20.3, §8.2)\n- SLO compliance report: achievement vs each SLI/SLO pair in the §20.1 table over a selectable period, computed from recorded metrics, with pass/fail per SLO and observed values\n- Both emitted as signed envelopes via the framework; JSON + human summary; reachable via `mtcctl report` and included in the `mtcctl report compliance` bundle (§17.3)\n- Missing metric history yields explicit `insufficient data`, never a fabricated pass\n\n## Out of Scope\n- Operational reports (obs-report-operational)\n- Alarming on SLO breach (obs-cw-dashboards-slo-alarms)\n\n## Testing\n- Unit: generators against synthetic audit records and metric series, including insufficient-data paths (§19.1)\n- E2E: demo env produces both reports after `make audit` and an issuance burst (§19.13)\n\n## Demo\n`make audit && mtcctl report compliance --from <t0> --to now` shows audit-history and SLO sections in the signed bundle.",
+      "size": "M",
+      "priority": 2,
+      "phase": 6,
+      "labels": [
+        "observability",
+        "compliance",
+        "reports",
+        "slo"
+      ],
+      "deps": [
+        "obs-report-framework",
+        "obs-auditor-core",
+        "obs-metrics-core"
+      ]
+    },
+    {
+      "slug": "obs-report-operational",
+      "title": "Operational reports: revocation, pruning, admin actions, failover, key ceremony",
+      "description": "## Goal\nComplete the §20.3 report table with the five operational-record generators, each consuming its owning epic's event records.\n\n## Acceptance Criteria\n- Generators for: revocation log (justification, operator, timestamp), pruning log (affected ranges), admin actions (all privileged calls with operator identity), failover events (region transitions, timestamps, outcomes), key ceremony events (HSM generation/rotation/replication) — per §20.3 table\n- Each generator reads its subsystem's records where shipped and otherwise emits an explicit signed `no data source available` section — reports never silently omit a category; ticket is NOT blocked on those subsystems shipping\n- Record schemas consumed via fixture-defined interfaces so owning epics can wire real sources later without changing the generators' envelope output shape\n- All included in the `mtcctl report compliance` bundle (§17.3); signed envelopes via the framework\n- Fixture-driven unit tests per generator with representative event records\n\n## Out of Scope\n- Producing the underlying event records (revocation, pruning, admin-surface, multi-region, operational-tooling epics)\n- Issuance/audit/SLO generators (obs-report-framework, obs-report-audit-slo)\n\n## Testing\n- Unit: per-generator fixtures including empty/absent sources (§19.1)\n- E2E: `mtcctl report compliance` bundle generation in the demo env (§19.13)\n\n## Demo\n`mtcctl report compliance --from <t0> --to now` emits a signed bundle with all five sections present (populated or explicitly empty).",
+      "size": "M",
+      "priority": 2,
+      "phase": 6,
+      "labels": [
+        "observability",
+        "compliance",
+        "reports"
+      ],
+      "deps": [
+        "obs-report-framework"
+      ]
+    },
+    {
+      "slug": "obs-capacity-prediction",
+      "title": "Capacity prediction metrics (S3, DDB, HSM, tree growth)",
+      "description": "## Goal\nImplement §20.4 forward-looking capacity metrics: trend-based projections for storage, coordination, signing, and tree growth.\n\n## Acceptance Criteria\n- Periodic job computes: projected S3 storage growth by category, DDB item-count growth, HSM signing-rate headroom vs observed peak, tree growth (entries/day trend and time-to-threshold estimate) (§20.4)\n- Exposed as `capacity_*` gauges through the metrics facade\n- Simple documented model (e.g. windowed linear trend); insufficient-history yields an explicit `unknown` state, not zero\n- Unit tests: known synthetic series produce expected projections and thresholds\n\n## Out of Scope\n- Dashboard tile rendering (follow-up in obs-log-inventory-dashboard once both exist)\n- Auto-scaling or acting on predictions\n- Cost modeling (§5 handles cost narrative)\n\n## Testing\n- Unit: projection math on synthetic series (§19.1)\n\n## Demo\nRun the demo issuance burst, then `curl /metrics | grep capacity_` shows growth projections.",
+      "size": "S",
+      "priority": 3,
+      "phase": 6,
+      "labels": [
+        "observability",
+        "capacity"
+      ],
+      "deps": [
+        "obs-metrics-core",
+        "storage-facade-core"
+      ]
+    },
+    {
+      "slug": "obs-rp-telemetry",
+      "title": "Relying party telemetry (anonymized) ingestion and surfacing",
+      "description": "## Goal\nImplement §20.2 relying-party telemetry: anonymized aggregate signals about how verifiers experience the log.\n\n## Acceptance Criteria\n- Ingest hook consuming read-path signals: landmark-age distribution, signatureless→full fallback rate, verification failure breakdown by reason, coarse geographic distribution (§20.2)\n- Aggregation-only storage: no per-client identifiers or IPs retained; a test asserts persisted records contain no client-identifying fields (§20.1 sensitive-data rule)\n- Surfaced as metrics through the facade and as a dashboard section with `active relying parties` feeding the log inventory view (§20.2)\n- Works in the local demo via the verification-loop demo driving the read path\n\n## Out of Scope\n- Read-path/proof-server emission of the signals (read-path epic provides the hook)\n- Client-side verification library changes\n\n## Testing\n- Unit: aggregation and anonymization assertions (§19.1)\n- Integration: demo verify loop populates aggregates (§19.1)\n\n## Demo\nRun the demo verify loop, open the dashboard RP panel: fallback rate and landmark-age histogram populate.",
+      "size": "M",
+      "priority": 3,
+      "phase": 6,
+      "labels": [
+        "observability",
+        "telemetry",
+        "read-path"
+      ],
+      "deps": [
+        "obs-metrics-core",
+        "obs-log-inventory-dashboard",
+        "EXTERNAL:proof-server relying-party telemetry hook (read-path epic)"
+      ]
+    },
+    {
+      "slug": "obs-adapter-observability",
+      "title": "Adapter activity report and per-adapter observability panel",
+      "description": "## Goal\nDeliver the §20.3 adapter activity report and §20.2 per-source observability surface for the adapter pattern era (Phase 9), testable in v1 by treating ACME as the first source.\n\n## Acceptance Criteria\n- Adapter activity report: per-adapter intake counts, success rate, lag (§20.3), signed via the report framework and included in the compliance bundle\n- Per-adapter panel in the UI adapters view showing health and intake rate (§17.4, §20.2 per-source intake rates), driven by `entries_by_source_total{source_type}` and batch `source_type`/`source_id` attributes (§8.2, §10)\n- ACME as a source renders/report-generates correctly today; external adapters slot in via their source attributes with no code change\n- Missing adapter framework degrades to ACME-only output, explicitly labeled\n\n## Out of Scope\n- Adapter framework, adapter health endpoints themselves (adapter-pattern epic)\n- `mtcctl adapter` subcommands (admin-surface epic)\n\n## Testing\n- Unit: report generator with multi-source fixtures (§19.1)\n- E2E: ACME-sourced report in the demo env (§19.13)\n\n## Demo\n`mtcctl report compliance` includes an adapter-activity section showing ACME intake counts; UI adapters view shows the ACME source panel.",
+      "size": "S",
+      "priority": 3,
+      "phase": 9,
+      "labels": [
+        "observability",
+        "adapters",
+        "reports"
+      ],
+      "deps": [
+        "obs-report-framework",
+        "EXTERNAL:adapter framework and health surface (adapter-pattern epic)"
+      ]
+    }
+  ]
+}

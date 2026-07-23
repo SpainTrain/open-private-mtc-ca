@@ -1,0 +1,199 @@
+{
+  "epic": {
+    "slug": "testing-infra",
+    "title": "Testing Infrastructure",
+    "description": "Shared testing harnesses, runners, fixture infrastructure, and CI wiring for the MTC CA per spec section 19: proptest conventions, four-layer fuzzing (19.3), conformance and differential runners against the bwesterb/mtc Go reference, fault-injection backends powering the adversarial (19.8) and chaos (19.9) suites, soak/perf/cross-version harnesses, Kani/Loom/Shuttle CI integration (19.12, 22.13), and the E2E-via-CLI harness (19.13). Component-specific tests ship with their component epics; this epic owns everything those tests plug into, all runnable on a laptop against LocalStack/SoftHSM/memory backends per section 1 non-goals (no cloud spend)."
+  },
+  "tickets": [
+    {
+      "slug": "test-support-crate",
+      "title": "Shared test-support crate with fixtures and proptest conventions",
+      "description": "## Goal\nCreate `crates/mtc-testutil`: shared fixture builders, deterministic RNG/temp-dir helpers, and the proptest conventions layer required by spec 19.2 and 19.3 Layer 1, so component epics write property tests against one common toolkit.\n\n## Acceptance Criteria\n- New dev-dependency crate `crates/mtc-testutil` with seeded-RNG helper, temp-dir/env helpers, and fixture builders for checkpoints, log entries, and tree-leaf sequences (built on core-mtc-types)\n- Shared proptest strategy helpers and a documented `Arbitrary` convention (impls live with each spec type behind a `testing` feature flag)\n- CI wiring runs proptest with extended iterations for spec types (PROPTEST_CASES >= 10,000 per 19.3 Layer 1) while local default stays fast (<30s unit budget per 19.1)\n- `proptest-regressions/` seed files checked in; convention documented in crate docs\n- One exemplar property test (round-trip on a core type) exercising the helpers\n\n## Out of Scope\n- Component property tests themselves (ship with component tickets per epic boundary)\n- Fuzz targets and corpus (test-fuzz-harness)\n- Fault-injection wrappers (test-fault-injection)\n\n## Testing\n- Unit tests for helpers; exemplar property test per 19.2\n\n## Demo\n`cargo test -p mtc-testutil`, then `PROPTEST_CASES=10000 cargo test` showing extended-iteration mode.",
+      "size": "M",
+      "priority": 1,
+      "phase": 1,
+      "deps": ["core-mtc-types", "ci-pipeline"],
+      "labels": ["testing", "proptest", "dev-experience"]
+    },
+    {
+      "slug": "test-conformance-runner",
+      "title": "Spec conformance suite runner and test-vector infrastructure",
+      "description": "## Goal\nBuild the clean-room spec conformance suite (spec 19.4, roadmap Phase 1): a test-vector format plus a runner that serves as an ongoing CI gate for MTC wire-format and verification behavior.\n\n## Acceptance Criteria\n- `conformance/vectors/` directory with a documented JSON+hex fixture format for spec structures (checkpoints, proofs, entries) and a README describing how to add vectors\n- Runner discovers every vector and asserts parse/serialize/verify expectations, including must-reject vectors with expected error class\n- Failure output identifies vector ID and shows a structural diff, not just an assertion failure\n- Suite runs on every PR under `cargo test --all-features` (required check per 22.13)\n- Seeded with clean-room vectors: checkpoint and inclusion-proof happy paths plus at least 3 invalid cases\n\n## Out of Scope\n- Cross-language differential comparison (test-differential-runner)\n- Vectors for structures not yet implemented (added by component tickets)\n\n## Testing\n- Unit tests for the vector loader; the suite itself is the conformance layer (19.4)\n\n## Demo\n`make conformance` prints per-vector pass/fail and total counts.",
+      "size": "M",
+      "priority": 1,
+      "phase": 1,
+      "deps": ["mtc-serialization"],
+      "labels": ["testing", "conformance"]
+    },
+    {
+      "slug": "test-go-ref-shim",
+      "title": "Go reference shim wrapping bwesterb/mtc for cross-language testing",
+      "description": "## Goal\nProvide a small Go CLI shim around `bwesterb/mtc` exposing parse/verify subcommands, the invocation helper on the Rust side, and the CI build step — the foundation for differential testing per spec 19.3 Layer 4 and 19.5 (refer to the Go code, never copy it, per roadmap Phase 1).\n\n## Acceptance Criteria\n- `tools/mtc-go-shim/` Go module with subcommands `parse-checkpoint`, `parse-proof`, `verify-inclusion`: bytes on stdin, canonical JSON on stdout, nonzero exit plus machine-readable error on reject\n- `bwesterb/mtc` version pinned in go.mod; `make go-shim` builds locally\n- CI job builds and caches the shim binary for downstream jobs\n- Rust wrapper in mtc-testutil spawns the shim with a timeout and typed result (the `call_go_binary` seam from 19.3 Layer 4)\n- Ships as 2 PRs: (1) Go shim + CI build/cache, (2) Rust invocation wrapper\n\n## Out of Scope\n- The differential runner and mismatch handling (test-differential-runner)\n- Nightly job wiring (test-differential-runner)\n\n## Testing\n- Unit test for the Rust wrapper; integration test round-tripping one known vector through the shim\n\n## Demo\n`make go-shim && echo <hex-vector> | tools/mtc-go-shim/bin/shim parse-checkpoint` emits parsed JSON.",
+      "size": "M",
+      "priority": 1,
+      "phase": 1,
+      "deps": ["ci-pipeline", "test-support-crate"],
+      "labels": ["testing", "differential", "go"]
+    },
+    {
+      "slug": "test-differential-runner",
+      "title": "Differential test runner (Rust vs Go reference) with nightly CI job",
+      "description": "## Goal\nImplement the differential runner comparing our parser/verifier against the Go reference shim (spec 19.3 Layer 4, 19.5): agreement on accept, agreement on reject, structural equality of parsed forms — run nightly in CI due to cross-language tooling cost.\n\n## Acceptance Criteria\n- Runner semantics per 19.3 Layer 4: both accept -> assert structural equality (canonical JSON compare); both reject -> pass; disagreement -> fail with the offending input persisted\n- Input sources: conformance vectors, proptest-generated cases, and `fuzz/corpus/` entries when present\n- Dual-path verification hook per 19.5: verify the same proof via our logic and via the shim, fail on disagreement\n- Nightly scheduled CI job with mismatch inputs uploaded as artifacts; `make differential INPUT=<file>` reproduces locally\n\n## Out of Scope\n- Building the Go shim (test-go-ref-shim)\n- Per-issuance differential checks inside the CA service (component epics reuse this runner)\n\n## Testing\n- Unit tests for the comparator; the suite itself is the differential layer (19.5)\n\n## Demo\n`make differential` runs the full corpus locally against the built shim and prints agree/disagree counts.",
+      "size": "M",
+      "priority": 1,
+      "phase": 1,
+      "deps": ["test-go-ref-shim", "test-conformance-runner"],
+      "labels": ["testing", "differential", "ci"]
+    },
+    {
+      "slug": "test-fuzz-harness",
+      "title": "cargo-fuzz scaffolding, corpus management, and CI wiring",
+      "description": "## Goal\nStand up the unstructured fuzzing layer (spec 19.3 Layer 2) and its corpus-management workflow: `fuzz/` workspace, checked-in corpora, crash-to-regression promotion, and CI jobs.\n\n## Acceptance Criteria\n- cargo-fuzz `fuzz/` setup with one exemplar target `parse_checkpoint` asserting no panic on arbitrary bytes, plus a documented template for the one-target-per-parseable-type convention (Checkpoint, MTCProof, RevocationList, TBSCertificateLogEntry, Tile, ACME body — remaining targets ship with component epics)\n- `fuzz/corpus/<target>/` checked into the repo, seeded with hand-crafted seeds plus conformance vectors once available (19.3 corpus management)\n- Documented promotion workflow: minimized crash inputs become permanent unit-test regression fixtures\n- CI: PR job replays corpus (no exploration) per target; nightly job fuzzes each target for a fixed budget with minimized crash artifacts uploaded\n- Allocation/RSS limits and per-input timeout configured so unbounded-allocation and unbounded-depth inputs fail (19.3 asserted properties)\n\n## Out of Scope\n- Structured `arbitrary`-bridge targets (test-structured-fuzz)\n- Fuzz targets for types owned by other epics\n\n## Testing\n- Fuzz (self); unit test proving the exemplar corpus replays clean\n\n## Demo\n`cargo +nightly fuzz run parse_checkpoint -- -runs=10000` completes with no crashes.",
+      "size": "M",
+      "priority": 1,
+      "phase": 1,
+      "deps": ["mtc-serialization", "ci-pipeline"],
+      "labels": ["testing", "fuzzing", "ci"]
+    },
+    {
+      "slug": "test-structured-fuzz",
+      "title": "Structured fuzzing helpers via the arbitrary bridge",
+      "description": "## Goal\nProvide the structured-fuzzing layer (spec 19.3 Layer 3): shared `arbitrary`-based generators producing semi-valid structures so fuzzing reaches post-parse verification paths that byte-level fuzzing misses.\n\n## Acceptance Criteria\n- `Arbitrary` impls/helpers for structured inputs (e.g., `ArbitraryProofInput`) in mtc-testutil behind a feature flag\n- Exemplar structured target per 19.3: construct a proof from arbitrary structured input, run verification, assert no panic\n- Structured targets run under the same PR-replay and nightly CI wiring as byte-level targets\n- Docs: decision guidance for structured vs unstructured targets, added to the fuzz template README\n\n## Out of Scope\n- Structured targets for component-owned types (ship with those epics)\n- Byte-level target scaffolding (test-fuzz-harness)\n\n## Testing\n- Fuzz (structured, 19.3 Layer 3); unit test for generator validity bounds\n\n## Demo\n`cargo +nightly fuzz run verify_proof_structured -- -runs=10000` exercises post-parse verification without panics.",
+      "size": "S",
+      "priority": 2,
+      "phase": 1,
+      "deps": ["test-fuzz-harness", "test-support-crate", "tree-primitives"],
+      "labels": ["testing", "fuzzing"]
+    },
+    {
+      "slug": "test-kani-ci",
+      "title": "Kani CI integration with critical-path gating",
+      "description": "## Goal\nWire `cargo kani` into CI per spec 19.12 and the 22.13 required-check rule (critical-path PRs must pass proofs), with conventions and a sentinel proof so component epics (tree primitives, lease/epoch, write-path linearization) add harnesses that run unmodified.\n\n## Acceptance Criteria\n- CI job installs a pinned Kani release with toolchain caching and runs `cargo kani` across crates opted in via a documented marker\n- Path-filter gating per 22.13: the check is required only when critical-path crates change; a nightly job runs all proofs unconditionally\n- Sentinel harness in mtc-testutil (`#[cfg(kani)]` module, small provable property with unwind bound) proves the wiring end-to-end and stays green\n- Conventions doc: harness placement in `#[cfg(kani)]` modules, naming scheme, unwind-bound annotations, and how to opt a crate in\n\n## Out of Scope\n- Real Kani harnesses (core-mtc-library and multi-region epics own their proofs per 19.12)\n- Loom/Shuttle wiring (test-loom-shuttle-ci)\n\n## Testing\n- Kani (sentinel harness); CI-config validation on a critical-path-touching PR\n\n## Demo\nOpen a PR touching an opted-in crate: the `cargo kani` check appears and passes; `cargo kani -p mtc-testutil` reproduces locally.",
+      "size": "S",
+      "priority": 1,
+      "phase": 1,
+      "deps": ["ci-pipeline", "test-support-crate"],
+      "labels": ["testing", "formal-verification", "ci"]
+    },
+    {
+      "slug": "test-loom-shuttle-ci",
+      "title": "Loom and Shuttle CI integration and authoring conventions",
+      "description": "## Goal\nWire Loom interleaving tests and Shuttle randomized concurrency tests into CI per spec 19.12, ahead of the Phase 5 lease-renewer/batch-builder concurrency tests (roadmap section 24), with sentinel tests proving the wiring.\n\n## Acceptance Criteria\n- Dedicated CI job runs loom tests with `RUSTFLAGS=\"--cfg loom\"`; loom tests are excluded from the normal `cargo test` run\n- Shuttle job with a fixed iteration budget; failing schedules are persisted with documented reproduction steps\n- Sentinel loom test and sentinel shuttle test in mtc-testutil keep both jobs green before component tests land\n- Conventions doc: `cfg(loom)` type-swapping pattern (loom::sync vs std::sync), test placement, and when to use Shuttle vs Loom (19.12: Shuttle for properties too expensive to model-check exhaustively)\n- Ships as 2 PRs: (1) Loom job + sentinel + doc, (2) Shuttle job + sentinel + doc\n\n## Out of Scope\n- The real concurrency tests (multi-region and ca-service epics author them)\n- Kani wiring (test-kani-ci)\n\n## Testing\n- Loom + Shuttle (sentinel tests); CI-config validation\n\n## Demo\n`make loom` runs the interleaving suite locally; CI shows the loom and shuttle jobs green on a PR.",
+      "size": "M",
+      "priority": 1,
+      "phase": 5,
+      "deps": ["ci-pipeline", "test-support-crate"],
+      "labels": ["testing", "formal-verification", "concurrency", "ci"]
+    },
+    {
+      "slug": "test-e2e-harness",
+      "title": "E2E-via-CLI harness, shell helpers, and CI job",
+      "description": "## Goal\nBuild the `tests/e2e/` harness per spec 19.13 and 19.1: E2E tests are plain shell scripts driving `mtcctl` against the full demo environment — a deliberate agent affordance.\n\n## Acceptance Criteria\n- `tests/e2e/` layout with a runner (`make e2e`) that boots the demo environment (LocalStack + SoftHSM per 19.1), discovers `*.sh` tests, runs each hermetically, and prints a pass/fail summary\n- Shared shell helper library: assertions, wait-for/retry, JSON extraction via jq\n- Rust-authored E2E tests supported alongside shell scripts (19.1)\n- First smoke test lands: issue -> lookup -> inclusion verified, matching the 19.13 example verbatim\n- CI job runs the E2E suite with service logs uploaded on failure\n\n## Out of Scope\n- Additional demo-scenario tests (issue/verify/revoke/prune scripts ship with their feature epics)\n- Soak-mode load driving (test-soak-harness)\n\n## Testing\n- E2E (19.1, 19.13); unit tests for any Rust runner code\n\n## Demo\n`make e2e` on a laptop boots the env and passes the issuance-and-verification smoke test.",
+      "size": "M",
+      "priority": 1,
+      "phase": 3,
+      "deps": ["localstack-dev-env", "ci-pipeline", "EXTERNAL:mtcctl cert issue/lookup and log inclusion commands (admin-surface + ca-service)"],
+      "labels": ["testing", "e2e", "dev-experience", "ci"]
+    },
+    {
+      "slug": "test-fault-injection",
+      "title": "Fault-injection wrappers for cloud abstraction backends",
+      "description": "## Goal\nProvide decorator backends implementing the cloud traits that inject configurable faults — the shared machinery behind the adversarial suite (spec 19.8), chaos scenarios (19.9), and component-level failure tests.\n\n## Acceptance Criteria\n- `FaultInjecting<T>` wrappers for `ObjectStore`, `ObjectLock`, `ReplicatedKv`, and `Hsm`: error injection, latency injection, replication-stall simulation, and a wrong-signature HSM mode (19.8)\n- Faults are scriptable and deterministic: triggered by operation count, key pattern, or explicit toggle; seedable for reproduction\n- Test-clock utility supporting forced clock skew for lease-related tests (19.8, 19.9)\n- Ships as a dev-dependency consumable by all component epics; wraps the memory backend with zero external dependencies (19.1 unit-test constraint)\n- Unit tests cover every injector mode\n\n## Out of Scope\n- Scenario definitions built on top (test-chaos-harness, adversarial tickets)\n- Process-level fault actions like killing a region (test-chaos-harness)\n\n## Testing\n- Unit + property (injector determinism given a seed)\n\n## Demo\n`cargo test -p mtc-testutil fault_injection` shows a wrong-signature HSM causing checkpoint verification to fail cleanly.",
+      "size": "M",
+      "priority": 1,
+      "phase": 2,
+      "deps": ["cloud-abstraction-traits", "memory-backend"],
+      "labels": ["testing", "fault-injection"]
+    },
+    {
+      "slug": "test-chaos-harness",
+      "title": "Chaos scenario harness for the local multi-region simulation",
+      "description": "## Goal\nBuild the chaos-engineering framework per spec 19.9: named scenarios with machine-checked pass/fail criteria, running fault actions against the local multi-region simulation — no cloud spend per section 1 non-goals.\n\n## Acceptance Criteria\n- Scenario abstraction: named scenario = setup + injected fault + pass criterion, mirroring the 19.9 table schema\n- Fault action library: kill region process, CRR delay/stall, DDB lag, HSM down, clock skew, entry flood — built on test-fault-injection plus process control of the dev simulation\n- Runner: `make chaos SCENARIO=<name>` and `make chaos` (all), emitting machine-readable results per scenario\n- First scenario end-to-end: chaos-primary-loss (kill primary mid-batch -> new primary promotes; no committed cert lost)\n- Chaos suite wired as a scheduled CI job (not per-PR)\n\n## Out of Scope\n- Remaining 19.9 scenarios (test-chaos-epoch-scenarios, test-chaos-infra-scenarios)\n- The multi-region simulation environment itself (multi-region epic)\n\n## Testing\n- Chaos/integration (19.9); unit tests for the runner and fault actions\n\n## Demo\n`make chaos SCENARIO=chaos-primary-loss` kills the primary mid-batch and reports PASS with the promotion evidence.",
+      "size": "M",
+      "priority": 1,
+      "phase": 5,
+      "deps": ["test-fault-injection", "lease-epoch-protocol", "ci-pipeline", "EXTERNAL:multi-region simulation in dev environment (multi-region epic)"],
+      "labels": ["testing", "chaos", "ci"]
+    },
+    {
+      "slug": "test-chaos-epoch-scenarios",
+      "title": "Chaos scenarios: split-brain, old-primary recovery, clock skew",
+      "description": "## Goal\nImplement the epoch-invariant chaos scenarios from the spec 19.9 table — the scenarios that exercise the core multi-region trust story (roadmap Phase 5 chaos scenarios).\n\n## Acceptance Criteria\n- chaos-split-brain: both regions attempt promotion -> exactly one succeeds (epoch invariant asserted)\n- chaos-old-primary-recovery: failed primary returns -> automatically stands down to read-only\n- chaos-clock-skew: +/-60s skew between regions -> lease semantics remain correct\n- Each scenario has an automated pass criterion matching the 19.9 table, is registered in the chaos runner, and runs in the scheduled CI chaos job\n- Failures capture region logs and epoch/lease state for debugging\n\n## Out of Scope\n- Infrastructure-fault scenarios (test-chaos-infra-scenarios)\n- Fixes to lease/epoch bugs these scenarios find (filed against multi-region epic)\n\n## Testing\n- Chaos/integration (19.9)\n\n## Demo\n`make chaos SCENARIO=chaos-split-brain` shows one promotion succeeding, one rejected, PASS.",
+      "size": "M",
+      "priority": 1,
+      "phase": 5,
+      "deps": ["test-chaos-harness"],
+      "labels": ["testing", "chaos", "multi-region"]
+    },
+    {
+      "slug": "test-chaos-infra-scenarios",
+      "title": "Chaos scenarios: CRR stall, DDB lag, HSM down, adapter flood",
+      "description": "## Goal\nComplete the full chaos suite (spec 19.9 table; roadmap Phase 8) with the infrastructure-fault scenarios.\n\n## Acceptance Criteria\n- chaos-crr-stall: injected 30-min (simulated) CRR delay -> failover waits for catchup\n- chaos-ddb-lag: forced replicated-KV lag -> no split-brain; reads are stale, never incorrect\n- chaos-hsm-down: HSM unavailable mid-batch -> batch retries, the observability epic's HSM-down alert signal fires, service eventually stands down\n- chaos-adapter-flood: adapter floods entries -> backpressure engages; no accepted entries lost\n- All registered in the chaos runner and scheduled CI job; each independently runnable via `make chaos SCENARIO=<name>`\n\n## Out of Scope\n- Epoch-invariant scenarios (test-chaos-epoch-scenarios)\n- Alerting/metric definitions asserted here (observability epic owns them)\n\n## Testing\n- Chaos/integration (19.9)\n\n## Demo\n`make chaos SCENARIO=chaos-hsm-down` shows retry, alert, and stand-down sequence ending in PASS.",
+      "size": "M",
+      "priority": 2,
+      "phase": 8,
+      "deps": ["test-chaos-harness", "entry-intake-trait", "EXTERNAL:HSM-down alert signal (observability epic)"],
+      "labels": ["testing", "chaos"]
+    },
+    {
+      "slug": "test-adversarial-wire",
+      "title": "Adversarial suite: wire, proof, and signing attacks",
+      "description": "## Goal\nImplement the wire/crypto half of the spec 19.8 adversarial suite: automated attacks on parsing, proof generation, and signing invariants, each asserting a specific rejection rather than mere absence of crash.\n\n## Acceptance Criteria\n- Malformed tiles fed to inclusion-proof generation -> typed error, no panic, no bogus proof (19.8)\n- Wrong signatures from a \"compromised\" HSM (fault-injection wrong-sig mode) -> checkpoint verification rejects with a signature error\n- Replayed old checkpoints -> rejected by freshness/monotonicity checks with the expected error class\n- Crafted public keys attempting key-hash collisions -> rejected; hash domain separation asserted\n- Malformed-input builders (tiles, keys, checkpoints) land in mtc-testutil for reuse by component epics\n- Suite gated behind `--features integration` (19.1), runs under the existing `cargo test --all-features` check (22.13); `make redteam` target added\n\n## Out of Scope\n- Coordination-layer attacks (test-adversarial-coordination)\n- Fixing vulnerabilities found (filed against owning epics)\n\n## Testing\n- Adversarial/integration (19.8); unit tests for input builders\n\n## Demo\n`make redteam` shows the replayed-old-checkpoint test rejecting with the expected error.",
+      "size": "M",
+      "priority": 2,
+      "phase": 8,
+      "deps": ["test-fault-injection", "checkpoint-signer", "tree-primitives"],
+      "labels": ["testing", "adversarial", "security"]
+    },
+    {
+      "slug": "test-adversarial-coordination",
+      "title": "Adversarial suite: lease, epoch, and allocation attacks",
+      "description": "## Goal\nImplement the coordination half of the spec 19.8 adversarial suite: attacks on lease/epoch, index allocation, and replication invariants, each asserting the invariant holds or the write is rejected.\n\n## Acceptance Criteria\n- Stalled CRR plus attempted promotion -> promotion refused until catchup (19.8)\n- Forced clock skew via the test clock (+/-60s) -> lease semantics remain correct\n- Duplicate index allocation attempts -> exactly one succeeds; allocated ranges never overlap\n- Stale-epoch writes -> rejected by conditional checks with a typed error\n- Runs against the memory backend with fault injection: deterministic and seedable, no LocalStack required (19.1)\n- Gated behind `--features integration` and included in the `make redteam` target\n\n## Out of Scope\n- Wire/crypto attacks (test-adversarial-wire)\n- Chaos process-level scenarios (chaos tickets)\n\n## Testing\n- Adversarial/integration (19.8); property test for allocation non-overlap under concurrent attack\n\n## Demo\n`make redteam` shows the stale-epoch write rejected and the duplicate-allocation attack producing exactly one winner.",
+      "size": "M",
+      "priority": 2,
+      "phase": 8,
+      "deps": ["test-fault-injection", "lease-epoch-protocol", "storage-facade-core"],
+      "labels": ["testing", "adversarial", "security"]
+    },
+    {
+      "slug": "test-soak-harness",
+      "title": "Soak test harness with PR and overnight modes",
+      "description": "## Goal\nBuild the soak harness per spec 19.7: long-running workloads that catch memory leaks, Tokio task leaks, lease starvation, cache eviction issues, and HSM connection-pool exhaustion.\n\n## Acceptance Criteria\n- Workload driver generating sustained issuance + verification load against the demo environment with configurable rate and duration\n- Leak detectors with trend assertions: process RSS, Tokio task count (via the service's runtime-metrics endpoint), open FDs/connections, lease-renewal continuity, cache hit-rate stability\n- 10-minute PR mode (19.7) — label-gated to keep PR CI fast — and a scheduled overnight run producing a report artifact\n- Failures include time-series of tracked metrics for diagnosis\n\n## Out of Scope\n- Latency percentile tracking (test-perf-regression)\n- Metric endpoint implementation (observability epic)\n- Fixing leaks found (filed against owning epics)\n\n## Testing\n- Soak (19.7); unit tests for detectors (synthetic leak triggers detection)\n\n## Demo\n`make soak DURATION=10m` runs the short profile locally and prints the leak-check report.",
+      "size": "M",
+      "priority": 2,
+      "phase": 8,
+      "deps": ["test-e2e-harness", "EXTERNAL:service metrics endpoint exposing Tokio runtime/task counts (observability epic)"],
+      "labels": ["testing", "soak", "ci"]
+    },
+    {
+      "slug": "test-version-fixtures",
+      "title": "Cross-version compatibility fixtures and runner",
+      "description": "## Goal\nImplement spec 19.10: versioned fixtures of historical log states plus a compatibility runner proving current code can always read and extend logs produced by earlier versions.\n\n## Acceptance Criteria\n- `fixtures/log-states/<version>/` format: serialized log-state snapshot (tiles, checkpoints, entries, metadata) plus a manifest describing producing version and expected invariants\n- Capture tool (`make capture-fixture`) snapshots the log state produced by the local demo issuance flow into a new versioned fixture\n- Compat runner: for every historical fixture, current code loads it, all checkpoints/proofs still verify, and a fresh append succeeds\n- Runs on every PR (fixtures kept small); adding a fixture is documented as part of release/tagging flow\n- First fixture captured from the current implementation\n\n## Out of Scope\n- Migration tooling for incompatible changes (operational-tooling epic)\n- Wire-format versioning design decisions (core-mtc-library)\n\n## Testing\n- Integration (fixture load against memory backend); unit tests for manifest parsing\n\n## Demo\n`make compat` loads every fixture and prints per-version verification results.",
+      "size": "M",
+      "priority": 2,
+      "phase": 8,
+      "deps": ["storage-facade-core", "mtc-serialization", "EXTERNAL:working single-region issuance demo (ca-service epic)"],
+      "labels": ["testing", "compatibility", "fixtures"]
+    },
+    {
+      "slug": "test-perf-regression",
+      "title": "Performance benchmark harness and regression CI gate",
+      "description": "## Goal\nImplement spec 19.11: benchmarks tracking p50/p99/p99.9 over time with a CI gate that fails on regression beyond threshold.\n\n## Acceptance Criteria\n- Benchmark harness (criterion or latency-histogram based) covering key operations: tree append, inclusion-proof generation, proof verification, serialization round-trip; reports p50/p99/p99.9\n- Baseline results stored in-repo (JSON) with a deliberate `make bench-baseline` update path reviewed in PRs\n- CI job compares current run to baseline with a configurable threshold (e.g., >10% p99 regression fails); warmup and fixed iteration counts documented to control noise\n- History retained across runs (artifact or branch) satisfying the \"over time\" tracking requirement (19.11)\n\n## Out of Scope\n- Service-level latency SLOs and dashboards (observability epic)\n- Benchmarks for components not yet built (added by their epics using this harness)\n\n## Testing\n- Performance (19.11); unit test for the comparator threshold logic\n\n## Demo\n`make bench` runs locally and prints percentile table plus delta vs baseline.",
+      "size": "M",
+      "priority": 2,
+      "phase": 8,
+      "deps": ["tree-primitives", "mtc-serialization", "ci-pipeline"],
+      "labels": ["testing", "performance", "ci"]
+    },
+    {
+      "slug": "test-testing-guide",
+      "title": "Testing guide: layers, commands, and authoring conventions",
+      "description": "## Goal\nWrite `docs/testing.md`, the authoritative guide to every test layer in spec 19.1-19.13: what each layer is for, the exact command to run it locally, and how to author new tests — including the agent affordance that E2E tests are plain shell (19.13). Part of Phase 8 documentation polish.\n\n## Acceptance Criteria\n- Documents each layer with its command: `cargo test`, `cargo test --features integration`, `make e2e`, `make conformance`, `make differential`, fuzz, `cargo kani`, `make loom`, `make chaos`, `make redteam`, `make soak`, `make bench`, `make compat`\n- Decision table mapping ticket types to required test layers, matching the 25.4 ticket template's Testing section\n- Documents corpus/fixture conventions: `fuzz/corpus/`, `proptest-regressions/`, conformance vectors, versioned log-state fixtures\n- Linked from README and AGENTS.md so agents discover it\n\n## Out of Scope\n- Runbooks and operational docs (observability/operational epics)\n- CI configuration changes\n\n## Testing\n- Doc examples validated: every listed command executes successfully on a laptop\n\n## Demo\nOpen `docs/testing.md`; copy-paste any command block and it runs.",
+      "size": "S",
+      "priority": 2,
+      "phase": 8,
+      "deps": ["test-soak-harness", "test-perf-regression", "test-version-fixtures", "test-chaos-harness", "test-adversarial-wire"],
+      "labels": ["testing", "docs", "dev-experience"]
+    }
+  ]
+}

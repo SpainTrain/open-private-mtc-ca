@@ -1,0 +1,322 @@
+{
+  "epic": {
+    "slug": "ca-service",
+    "title": "CA Service (Single-Region)",
+    "description": "Build the single-region MTC CA service (Phase 3 MVP): the source-agnostic EntryIntake adapter seam (spec 10.2, 25.9), the native ACME endpoint as the first adapter, and the full write-path lifecycle (batch builder, index allocation, entry/tile writes, tree updater, HSM-backed checkpoint signer, and the linearization-point commit) per spec sections 10-11. It culminates in a laptop-runnable single-region issuance end-to-end demo against LocalStack + SoftHSM, with the section 11.2 critical invariants enforced and machine-checked where the spec demands (Kani for index allocation and the linearization point, Loom for intake/batch concurrency per 19.12). Multi-region lease/epoch protocol, admin surfaces, and non-ACME adapters belong to other epics."
+  },
+  "tickets": [
+    {
+      "slug": "entry-intake-trait",
+      "title": "Define EntryIntake trait and LogEntry types (adapter seam)",
+      "description": "## Goal\nEstablish the source-agnostic Stage-1/Stage-2 seam from day one (spec 10.2, 10.4, 25.9): `LogEntry` (tbs_cert bytes, source_type, source_id, submitted_at), a `SourceType` enum, and the async `EntryIntake` trait every adapter (including native ACME) funnels through.\n\n## Acceptance Criteria\n- Crate exports `LogEntry`, `SourceType`, `EntryIntake` matching spec 10.2 semantics\n- `submit_entry(entry) -> Result<Index, IntakeError>` resolves with the assigned index; `IntakeError` covers QueueFull, NotPrimary, Shutdown\n- `source_type`/`source_id` flow through so batch state can persist them (spec 8.2, 10.2 audit traceability)\n- No ACME-specific types leak into the trait; ACME is one adapter among many (spec 10.4)\n- Rustdoc documents the adapter contract of spec 10.3\n\n## Out of Scope\n- Queue implementation (batch-builder)\n- ACME endpoint (ca-acme-core, ca-acme-issuance)\n- Non-ACME adapters (post-v1 adapter-pattern epic)\n\n## Testing\n- Unit: trait usable via mock impl; error taxonomy exercised\n- Property: SourceType/LogEntry serde round-trip (spec 19.2)\n\n## Demo\n`cargo test -p mtc-ca-service intake` green; `cargo doc` shows the documented adapter seam.",
+      "size": "S",
+      "priority": 0,
+      "phase": 3,
+      "deps": [
+        "core-mtc-types"
+      ],
+      "labels": [
+        "ca-service",
+        "adapter-seam"
+      ]
+    },
+    {
+      "slug": "ca-clock",
+      "title": "Injected Clock abstraction (SystemClock + FakeClock)",
+      "description": "## Goal\nProvide the injected `Clock` interface the CA service requires (spec 11.4 struct field, 18.4 time travel): a `Clock` trait plus `SystemClock` and a controllable `FakeClock`, so batch cadence, lease-expiry guards, and checkpoint timestamps are deterministic in tests and time-travel-ready in dev.\n\n## Acceptance Criteria\n- `Clock` trait with `now()`; `SystemClock` for prod, `FakeClock` with `set`/`advance` for dev/test\n- All CA-service time reads go through `Clock` (no direct `SystemTime::now` in ca-service crates, enforced by a clippy `disallowed-methods` deny in CI)\n- Dev-mode wiring can select `FakeClock` via config\n- FakeClock is `Send + Sync` and safely shareable across the batch builder and signer tasks\n\n## Out of Scope\n- Admin API control of the fake clock (admin-surface epic)\n- `make time-advance` target wiring (local dev experience epic, spec 18.4)\n\n## Testing\n- Unit: FakeClock advance/set semantics; trait-object usage from async tasks\n\n## Demo\n`cargo test -p mtc-ca-service clock`; example test shows advancing FakeClock triggers a batch-cadence tick.",
+      "size": "S",
+      "priority": 0,
+      "phase": 3,
+      "deps": [],
+      "labels": [
+        "ca-service",
+        "dev-experience"
+      ]
+    },
+    {
+      "slug": "batch-builder",
+      "title": "Batch builder: intake queue + cadence/size batch emission",
+      "description": "## Goal\nImplement the in-memory entry intake queue (spec 8.4) and the batch builder that drains it: accumulate `LogEntry` values and emit a batch on cadence (2-5s, dev-configurable faster per spec 18.1) or when full at 256 entries (spec 11.1 step 2).\n\n## Acceptance Criteria\n- Bounded mpsc-backed queue implements `EntryIntake`; overflow returns `IntakeError::QueueFull` (backpressure, no silent drops)\n- Batch emitted when cadence timer fires (via injected Clock) or size reaches 256, whichever first\n- Per-entry completion handles let submitters await their assigned Index/certificate after commit (feeds spec 11.1 step 9 delivery)\n- FIFO order preserved: entries appear in batches in submission order\n- Cadence/size limits configurable; dev profile uses faster cadence\n- Graceful drain on shutdown: queued entries emitted or failed with `Shutdown`\n\n## Out of Scope\n- Index allocation, lease checks, tree update (downstream tickets)\n- Lease renewer interaction (multi-region epic)\n\n## Testing\n- Unit; property: arbitrary submit sequences place every entry in exactly one batch, order preserved (spec 19.2)\n- Loom: concurrent submitters vs builder drain interleavings (spec 19.12)\n\n## Demo\n`cargo test -p mtc-ca-service batch_builder`; example bin feeds 1000 entries and prints batch boundaries/cadence behavior.",
+      "size": "M",
+      "priority": 0,
+      "phase": 3,
+      "deps": [
+        "entry-intake-trait",
+        "ca-clock"
+      ],
+      "labels": [
+        "ca-service",
+        "write-path"
+      ]
+    },
+    {
+      "slug": "ca-lease-check",
+      "title": "Write-path lease check with epoch capture (single-region)",
+      "description": "## Goal\nImplement write-path step 1 (spec 11.1, 11.4): read the lease via the storage facade, verify this holder is primary, reject with `NotPrimary`/`LeaseExpiringSoon` (expires_at < now + 5s), and capture the lease epoch into the service's `current_epoch` atomic for the batch.\n\n## Acceptance Criteria\n- `read_lease` consulted at the top of every batch; epoch captured once per batch (spec 11.4)\n- Wrong region/holder yields `NotPrimary` (maps to HTTP 503 at the edge per spec 11.3 row 1)\n- Expiring-soon guard uses injected Clock with the 5s margin from spec 11.4\n- Single-region dev lease provider seeds a static long-lived lease item (region, holder_id, epoch=1) so the write path runs without the multi-region protocol\n- Epoch value is what all downstream conditional writes use (spec 11.2)\n\n## Out of Scope\n- Lease renewal, takeover, epoch increment (multi-region epic, spec 8.3)\n- Standby-mode 503 service behavior (multi-region epic)\n\n## Testing\n- Unit (memory backend): happy path, wrong region, expiring-soon\n- Integration: lease item in LocalStack DDB\n\n## Demo\nRun dev binary with seeded lease: batches proceed; delete the lease item and observe `NotPrimary` rejection.",
+      "size": "S",
+      "priority": 1,
+      "phase": 3,
+      "deps": [
+        "storage-facade-core",
+        "ca-clock"
+      ],
+      "labels": [
+        "ca-service",
+        "write-path"
+      ]
+    },
+    {
+      "slug": "ca-index-allocator",
+      "title": "Atomic index allocation via counter UpdateItem with epoch check",
+      "description": "## Goal\nImplement write-path step 3 (spec 11.1): atomic index-range allocation against the `counter` item (spec 8.2) via UpdateItem with `ConditionExpression epoch = :epoch`, upholding the counter-never-decreases invariant (spec 11.2). Mirrors the exemplar ticket in spec 25.4.\n\n## Acceptance Criteria\n- `allocate_indices(n, epoch) -> Result<(Index, Index), AllocateError>` on the storage facade\n- Returns `AllocateError::LostLease` on conditional check failure (spec 11.3 row 3)\n- Counter is monotonic: abandoned ranges are never reused (gaps handled by ca-abandoned-batch-recovery)\n- Idempotent counter bootstrap initializes `next_index=0` for an empty log\n- Property test: concurrent allocations produce non-overlapping ranges (spec 25.4)\n- Kani harness: no two successful allocations overlap (spec 19.12, 25.4)\n\n## Out of Scope\n- Lease renewer (multi-region epic)\n- Null-entry gap filling (ca-abandoned-batch-recovery)\n\n## Testing\n- Unit, property (proptest), integration (LocalStack DDB), Kani\n\n## Demo\n`cargo test --features integration allocate`; `awslocal dynamodb get-item` shows the counter advancing after a demo batch.",
+      "size": "S",
+      "priority": 0,
+      "phase": 3,
+      "deps": [
+        "storage-facade-core"
+      ],
+      "labels": [
+        "ca-service",
+        "write-path",
+        "kani"
+      ]
+    },
+    {
+      "slug": "ca-batch-state-store",
+      "title": "Batch state persistence (batch#{batchId} DDB items)",
+      "description": "## Goal\nImplement write-path step 4 (spec 11.1): persist batch state as `batch#{batchId}` items with status, start_index, end_index, leaf_count, epoch, created_at, committed_at, source_type, source_id per the spec 8.2 schema, including the adapter-traceability fields (spec 10.2).\n\n## Acceptance Criteria\n- `persist_batch_state(batch_id, start, end, status, epoch)` writes a Pending item with all spec 8.2 attributes\n- `BatchStatus` is a closed-set enum (Pending/Committed/Abandoned) per spec 22.3\n- `source_type`/`source_id` from the batch's entries are persisted for audit traceability (spec 10.2)\n- Epoch included on the conditional write (spec 11.2)\n- Query helper lists Pending batches (needed by recovery scans)\n\n## Out of Scope\n- The commit transaction that flips Pending to Committed (ca-commit-transaction)\n- Admin inspection surfaces (admin-surface epic)\n\n## Testing\n- Unit (memory backend), integration (LocalStack DDB)\n\n## Demo\nAfter a demo-mode batch: `awslocal dynamodb query` on `log#{logId}` shows the batch item with source_type=native-acme.",
+      "size": "S",
+      "priority": 1,
+      "phase": 3,
+      "deps": [
+        "storage-facade-core"
+      ],
+      "labels": [
+        "ca-service",
+        "write-path"
+      ]
+    },
+    {
+      "slug": "ca-entry-writer",
+      "title": "Parallel S3 entry writer with partial-failure retry",
+      "description": "## Goal\nImplement write-path step 5 (spec 11.1): serialize each batch entry and write N parallel S3 objects under `entries/` using the fixed-width zero-padded key layout of spec 8.1, with retry of only the missing objects on partial failure (spec 11.3 row 5).\n\n## Acceptance Criteria\n- `write_entries(start, entries)` performs bounded-concurrency parallel PutObject\n- Key format matches spec 8.1 (`entries/000/000/000000.entry`, lexicographic = index order)\n- Partial failure retries only unwritten objects; re-put of an identical immutable object is safe/idempotent (spec 11.2, 8.1 invariants)\n- Entry bytes produced via mtc-serialization; round-trip verified\n- Fault-injection test proves resumption after a mid-batch failure\n\n## Out of Scope\n- Tile writes (tree-updater)\n- Null-entry gap fill (ca-abandoned-batch-recovery)\n\n## Testing\n- Unit with memory-backend fault injection; property: key encoding is order-preserving and reversible; integration (LocalStack S3)\n\n## Demo\nAfter a demo batch: `awslocal s3 ls s3://mtc-log-local/entries/ --recursive` shows contiguous zero-padded entry objects.",
+      "size": "S",
+      "priority": 1,
+      "phase": 3,
+      "deps": [
+        "storage-facade-core",
+        "mtc-serialization"
+      ],
+      "labels": [
+        "ca-service",
+        "write-path"
+      ]
+    },
+    {
+      "slug": "tree-updater",
+      "title": "Tree updater: incremental tile computation and persistence",
+      "description": "## Goal\nImplement write-path step 6 (spec 11.1): given the current tree size and a batch of new leaves, compute affected interior nodes with tree-primitives, produce the new root and the set of new/updated tiles, reading existing tiles through the storage facade's LRU tile cache (spec 8.4) and writing new tiles to S3 (spec 8.1 layout).\n\n## Acceptance Criteria\n- `update_tree(start, entries) -> (new_root, new_tiles)` touches only tiles affected by the append\n- Partial right-edge tiles handled correctly across batch boundaries (growing rightmost tile rewritten; full tiles immutable thereafter)\n- Root matches a reference in-memory Merkle tree for arbitrary append sequences\n- Tiles written via storage facade `write_tiles`; tile key layout matches spec 8.1\n- Full (immutable) tiles served from the LRU cache unconditionally; the growing right-edge partial tile is re-read on each batch and never served stale from cache (spec 8.4)\n\n## Out of Scope\n- Inclusion-proof serving (read-path epic)\n- Checkpoint signing (checkpoint-signer)\n- Kani proofs of tree primitives themselves (core-mtc-library epic)\n\n## Testing\n- Unit; property: append preserves previously-valid inclusion proofs, identical leaves yield identical roots (spec 19.2); integration (LocalStack S3)\n\n## Demo\n`cargo test -p mtc-ca-service tree_updater`; example appends 10k leaves across batches and prints root evolution plus tile-write counts.",
+      "size": "M",
+      "priority": 0,
+      "phase": 3,
+      "deps": [
+        "tree-primitives",
+        "storage-facade-core"
+      ],
+      "labels": [
+        "ca-service",
+        "write-path",
+        "merkle"
+      ]
+    },
+    {
+      "slug": "checkpoint-signer",
+      "title": "Checkpoint signer: typestate builder + HSM signing",
+      "description": "## Goal\nImplement write-path step 7 (spec 11.1): a typestate `CheckpointBuilder` (spec 22.2) over (log_id, tree_size, root_hash, signed_at), canonical `checkpoint_signing_input` bytes, and signing via the `Hsm` trait with ECDSA P-256 (v1 per spec 14.1), with retry/backoff on HSM failure (spec 11.3 row 7).\n\n## Acceptance Criteria\n- Builder rejects incomplete checkpoints at compile time (spec 22.2)\n- Signing input serialization is deterministic; pinned test vector guards it\n- Signature verifies against the HSM public key; checkpoint object bytes match spec 8.1 `checkpoints/{tree_size}.signed` format\n- Transient HSM failure retried with backoff; persistent failure surfaces a distinct alert-worthy error\n- Benchmark measures signing latency against SoftHSM with the <100ms p99 target (spec 14.3) reported via `make bench`\n\n## Out of Scope\n- ML-DSA (v2 algorithm, feature-flagged in core-mtc-library)\n- CloudHSM/production keys and rotation ceremonies (spec 14.2)\n- Commit of the signed checkpoint (ca-commit-transaction)\n\n## Testing\n- Unit (fake Hsm); integration (SoftHSM PKCS#11); performance bench (spec 19.11)\n\n## Demo\n`cargo test --features integration checkpoint_signer`; `make bench` prints a signing latency histogram vs the 100ms p99 target.",
+      "size": "M",
+      "priority": 0,
+      "phase": 3,
+      "deps": [
+        "mtc-serialization",
+        "cloud-abstraction-traits",
+        "softhsm-backend"
+      ],
+      "labels": [
+        "ca-service",
+        "write-path",
+        "hsm"
+      ]
+    },
+    {
+      "slug": "ca-commit-transaction",
+      "title": "Commit: linearization point (S3 checkpoint + DDB transaction)",
+      "description": "## Goal\nImplement write-path step 8, the linearization point (spec 11.1-11.2): PutObject of the signed checkpoint at its deterministic key, then a DDB TransactWriteItems that updates the latest-checkpoint pointer and marks the batch Committed, all epoch-conditioned.\n\n## Acceptance Criteria\n- `commit_checkpoint(cp, batch_id, epoch)` enforces S3-first-DDB-second ordering (spec 11.2)\n- DDB transaction failure leaves only a harmless orphan S3 checkpoint; test proves readers still see the old latest-checkpoint (spec 11.3 row 8)\n- Re-commit of the same checkpoint is idempotent (deterministic key, identical bytes)\n- Epoch mismatch on either txn item returns `LostLease`; no partial commit possible\n- Kani harness: the latest-checkpoint transition is atomic - any observer sees the old or new pointer, never an intermediate state (spec 19.12)\n\n## Out of Scope\n- Orphan-cleanup Lambda (observability/pruning epics)\n- Lease/epoch protocol itself (multi-region epic)\n\n## Testing\n- Unit with memory-backend fault injection at each sub-step; integration (LocalStack S3+DDB); Kani\n\n## Demo\nAfter a demo batch: `awslocal s3 ls checkpoints/` and the DDB latest-checkpoint item agree on tree_size; kill the txn via fault flag and observe the orphan being ignored.",
+      "size": "M",
+      "priority": 0,
+      "phase": 3,
+      "deps": [
+        "ca-batch-state-store"
+      ],
+      "labels": [
+        "ca-service",
+        "write-path",
+        "kani"
+      ]
+    },
+    {
+      "slug": "ca-cert-assembly",
+      "title": "MTC certificate assembly and delivery handles",
+      "description": "## Goal\nImplement write-path step 9 (spec 11.1): after commit, build the deliverable MTC certificate for each batch entry - TBSCertificateLogEntry + MTCProof (inclusion proof against the just-committed checkpoint) + CA signature - and complete the per-entry delivery handles opened at intake.\n\n## Acceptance Criteria\n- Inclusion proof generated from the freshly written tiles for each index in the batch\n- Assembled certificate serializes and round-trips via mtc-serialization\n- Each assembled cert verifies against the committed checkpoint using tree-primitives verification\n- Completion handles resolve with (Index, certificate); failures resolve with a typed error so ACME finalize can report accurately\n\n## Out of Scope\n- Proof-server Lambda and relying-party verification library (read-path epic, spec 12)\n- ACME transport of the cert (ca-acme-issuance)\n\n## Testing\n- Unit; property: every entry of an arbitrary committed batch yields a verifying certificate (spec 19.2)\n\n## Demo\n`cargo test -p mtc-ca-service cert_assembly`; example prints one issued certificate and locally verifies its inclusion proof.",
+      "size": "S",
+      "priority": 1,
+      "phase": 3,
+      "deps": [
+        "tree-primitives",
+        "mtc-serialization"
+      ],
+      "labels": [
+        "ca-service",
+        "write-path"
+      ]
+    },
+    {
+      "slug": "ca-service-orchestrator",
+      "title": "CaService issue_batch orchestrator (steps 1-9 wired)",
+      "description": "## Goal\nWire the full `issue_batch` pipeline of spec 11.4: lease check, index allocation, batch state, entry writes, tree update, checkpoint signing, commit, and delivery, with the `IssueError` taxonomy and the failure handling of the spec 11.3 table.\n\n## Acceptance Criteria\n- `CaService` struct per spec 11.4 with injected Storage, Hsm, Clock, TileCache, intake receiver\n- Every spec 11.3 failure row has a test asserting the specified effect and recovery (lease fail -> NotPrimary; counter fail -> batch abandoned/stand down; S3 partial -> retry remaining; HSM fail -> backoff; DDB txn fail -> orphan tolerated)\n- Epoch captured once per batch and used in every conditional write (spec 11.2)\n- In-memory checkpoint cache holds the last N checkpoints by tree_size, updated after each commit (spec 8.4)\n- Lease-check-to-commit window is lock-free: no locks held across awaits (spec 11.4)\n- Tracing spans per lifecycle step for later observability wiring\n\n## Out of Scope\n- ACME endpoint and service binary (separate tickets)\n- Standby 503 mode and lease renewal (multi-region epic)\n\n## Testing\n- Unit: full pipeline on memory backend; integration: full pipeline on LocalStack + SoftHSM; Loom/Shuttle: intake submission concurrent with batch emission (spec 19.12)\n\n## Demo\n`cargo test --features integration issue_batch_e2e` issues a batch and asserts the checkpoint advanced and certs verify.",
+      "size": "M",
+      "priority": 0,
+      "phase": 3,
+      "deps": [
+        "batch-builder",
+        "ca-lease-check",
+        "ca-index-allocator",
+        "ca-entry-writer",
+        "tree-updater",
+        "checkpoint-signer",
+        "ca-commit-transaction",
+        "ca-cert-assembly"
+      ],
+      "labels": [
+        "ca-service",
+        "write-path",
+        "loom"
+      ]
+    },
+    {
+      "slug": "ca-abandoned-batch-recovery",
+      "title": "Abandoned-batch recovery: null_entry gap fill",
+      "description": "## Goal\nEnforce the spec 11.2 invariant that abandoned index ranges become permanent gaps filled with `null_entry`: batches left Pending by a crash or lost lease (spec 11.3 row 3) must be resolved so the tree stays dense and the counter never rolls back.\n\n## Acceptance Criteria\n- Startup and periodic scan finds Pending batches past a staleness threshold (or with a superseded epoch)\n- Their allocated ranges are filled with spec-compliant `null_entry` objects via the entry writer, then the batch is marked Abandoned\n- Committed batches are never touched; recovery is idempotent under repeated runs and crashes mid-recovery\n- After recovery, the next committed checkpoint's tree_size covers the filled gap and inclusion proofs for the null entries verify against it\n\n## Out of Scope\n- Multi-region takeover and epoch fencing semantics (multi-region epic)\n- Orphan S3 checkpoint cleanup (observability/pruning epics)\n\n## Testing\n- Unit: simulated crash between steps 3 and 8 via memory-backend fault injection; integration: kill/restart against LocalStack\n\n## Demo\nKill the demo service mid-batch (fault flag), restart, and observe the gap filled with null entries while new issuance proceeds at the next indices.",
+      "size": "S",
+      "priority": 2,
+      "phase": 3,
+      "deps": [
+        "ca-batch-state-store",
+        "ca-entry-writer"
+      ],
+      "labels": [
+        "ca-service",
+        "write-path",
+        "recovery"
+      ]
+    },
+    {
+      "slug": "ca-acme-core",
+      "title": "ACME server core: directory, nonces, accounts, JWS verification",
+      "description": "## Goal\nLay the RFC 8555 foundation for the native ACME adapter (spec 10, 24 Phase 3): axum routes for directory, new-nonce, and new-account, with ES256 JWS verification, anti-replay nonce handling, and an ACME problem-document error type.\n\n## Acceptance Criteria\n- Axum routes: `/acme/directory`, new-nonce, new-account per RFC 8555 sections 7.1.1, 7.2, 7.3\n- JWS (ES256) verified: signature, protected header (alg/nonce/url) checks, account key binding; failures return ACME problem documents (badNonce, badSignatureAlgorithm, malformed)\n- Nonces are single-use: replaying a consumed nonce returns badNonce and every response carries a fresh Replay-Nonce header\n- Account store keyed by JWK thumbprint (RFC 7638); re-registering an existing key returns the existing account\n- Fuzz target for JWS/request-body parsing added per spec 19.3 (no panic on arbitrary bytes)\n\n## Out of Scope\n- Orders, authorizations, challenges (ca-acme-orders)\n- finalize/cert issuance (ca-acme-issuance)\n- External account binding; admin surfaces (admin-surface epic)\n\n## Testing\n- Unit; fuzz (cargo-fuzz JWS/body target, spec 19.3); integration: in-process client fetches directory, obtains nonce, registers account\n\n## Demo\nRun the service and `curl localhost:PORT/acme/directory`; scripted client registers an account and demonstrates a rejected replayed nonce.",
+      "size": "M",
+      "priority": 1,
+      "phase": 3,
+      "deps": [],
+      "labels": [
+        "ca-service",
+        "acme",
+        "fuzz"
+      ]
+    },
+    {
+      "slug": "ca-acme-orders",
+      "title": "ACME order/authz/http-01 flow with typestate state machine",
+      "description": "## Goal\nImplement the RFC 8555 order lifecycle on top of the ACME core: new-order, authorization, and http-01 challenge routes, with the order state machine enforced by typestate (spec 22.4) and dev-mode auto-validation so the 60-second demo issues without real DNS (spec 18.1).\n\n## Acceptance Criteria\n- Routes: new-order, order fetch, authz fetch, challenge respond per RFC 8555 7.4-7.5\n- Order transitions pending -> ready enforced at compile time via typestate (spec 22.4); invalid transitions are unrepresentable\n- http-01 challenge: dev-mode flag auto-validates instantly; non-dev mode performs the real HTTP token fetch\n- Failed/expired authorizations produce ACME problem documents and mark the order invalid\n- Fuzz targets extended to order/challenge request payloads (spec 19.3)\n\n## Out of Scope\n- finalize/cert issuance (ca-acme-issuance)\n- DNS-01/TLS-ALPN-01 challenge types; real DNS/HTTP challenge infrastructure\n\n## Testing\n- Unit; fuzz (spec 19.3); integration: in-process ACME client walks account -> order -> authz -> ready\n\n## Demo\nScripted client walks a full order to ready state against the dev-mode server.",
+      "size": "M",
+      "priority": 1,
+      "phase": 3,
+      "deps": [
+        "ca-acme-core"
+      ],
+      "labels": [
+        "ca-service",
+        "acme",
+        "fuzz"
+      ]
+    },
+    {
+      "slug": "ca-acme-issuance",
+      "title": "ACME finalize -> EntryIntake -> MTC cert delivery",
+      "description": "## Goal\nBridge ACME to the log pipeline as one adapter among many (spec 10.4): finalize validates the CSR against the ready order, builds a spec-compliant TBSCertificateLogEntry, submits via `EntryIntake` with source_type \"native-acme\", awaits the committed index, and serves the assembled MTC certificate (spec 11.1 step 9).\n\n## Acceptance Criteria\n- finalize moves order processing -> valid only after the entry commits; cert URL serves the assembled MTC certificate\n- LogEntry carries source_type=\"native-acme\" and source_id=order id, visible on the batch state item (spec 10.2 traceability)\n- Intake `NotPrimary` maps to HTTP 503 (spec 11.3 row 1); QueueFull maps to retry-after\n- finalize retry is idempotent: re-submitting a finalized order returns the same cert, no duplicate log entry\n- CSR validation failures produce ACME problem documents without touching intake\n\n## Out of Scope\n- Other adapters (AWS PCA etc., adapter-pattern epic)\n- Proof serving to relying parties (read-path epic)\n\n## Testing\n- Unit; integration: full order -> finalize -> cert against the memory-backend pipeline; E2E covered by ca-e2e-demo\n\n## Demo\nDemo ACME client issues one cert end-to-end; `awslocal dynamodb query` shows the batch item with source_type=native-acme and the order's source_id.",
+      "size": "M",
+      "priority": 1,
+      "phase": 3,
+      "deps": [
+        "ca-acme-orders",
+        "entry-intake-trait",
+        "ca-cert-assembly",
+        "mtc-serialization"
+      ],
+      "labels": [
+        "ca-service",
+        "acme",
+        "adapter-seam"
+      ]
+    },
+    {
+      "slug": "ca-service-binary",
+      "title": "ca-service binary: config, wiring, health, graceful shutdown",
+      "description": "## Goal\nShip the runnable `ca-service` binary: config loading, backend wiring per spec 9.4 (memory vs LocalStack/AWS vs SoftHSM), mounting ACME routes plus minimal health endpoints, dev-mode flags (fast cadence, fake clock), and graceful shutdown that drains the intake queue.\n\n## Acceptance Criteria\n- One binary starts orchestrator + ACME server from a single config; backend selection (memory/localstack) requires no code change (spec 9.4)\n- `/healthz` and `/readyz` endpoints respond (minimal subset of spec 20.5)\n- SIGTERM drains the in-flight batch before exit; queued-but-unbatched entries fail with `Shutdown`\n- Dev profile enables fast cadence and FakeClock (spec 18.1, 18.4)\n- Works under cargo-watch hot reload (spec 18.7)\n\n## Out of Scope\n- Fargate/CDK deployment (foundation-infra epic)\n- Admin API/UI routes (admin-surface epic)\n\n## Testing\n- Unit: config parsing/validation; integration: spawn binary against LocalStack + SoftHSM, hit healthz, issue one cert\n\n## Demo\n`cargo run -p ca-service` then `curl localhost:PORT/healthz`; issue a cert with the ACME test script.",
+      "size": "S",
+      "priority": 1,
+      "phase": 3,
+      "deps": [
+        "ca-service-orchestrator",
+        "ca-acme-issuance",
+        "memory-backend",
+        "aws-backend"
+      ],
+      "labels": [
+        "ca-service",
+        "dev-experience"
+      ]
+    },
+    {
+      "slug": "ca-e2e-demo",
+      "title": "Single-region issuance end-to-end demo + E2E test",
+      "description": "## Goal\nDeliver the Phase 3 exit criterion (spec 24): single-region issuance end-to-end on a laptop. Extend `make demo` (spec 18.1) to launch the CA service in dev mode against LocalStack + SoftHSM with a sample ACME client auto-issuing certs in a loop, plus a shell E2E test (spec 19.13 style).\n\n## Acceptance Criteria\n- `make demo` brings up CA service + sample ACME client on the localstack-dev-env compose; seed step initializes counter and dev lease\n- Certs issue continuously; checkpoints advance in S3 (`checkpoints/` grows, latest-checkpoint pointer follows)\n- `tests/e2e/single-region-issuance.sh`: issue via ACME client -> assert entry object exists -> assert cert inclusion verifies against the latest checkpoint (verification via a small helper bin since mtcctl belongs to admin-surface)\n- Script wired into `make test-e2e` (spec 18.8) and CI integration job\n- Cold `make demo` reaches first issued cert within the 60-second target (spec 18.1)\n\n## Out of Scope\n- Admin UI and self-auditor panes of the demo (their epics)\n- Multi-region simulation `make demo-multiregion` (multi-region epic, spec 18.3)\n\n## Testing\n- E2E (shell, spec 19.13); integration (compose bring-up smoke)\n\n## Demo\n`make demo` then `make test-e2e`; watch the ACME client loop print issued serials while checkpoints advance.",
+      "size": "M",
+      "priority": 0,
+      "phase": 3,
+      "deps": [
+        "ca-service-binary",
+        "localstack-dev-env"
+      ],
+      "labels": [
+        "ca-service",
+        "demo",
+        "e2e"
+      ]
+    },
+    {
+      "slug": "ca-docs-write-path",
+      "title": "CA service docs: lifecycle, invariants, adapter guide",
+      "description": "## Goal\nMeet the epic's documentation obligations (spec 25.6 documentation parallel track): a ca-service crate README with the write-path lifecycle diagram (spec 11.1), critical invariants (spec 11.2), the failure-mode table (spec 11.3), and an adapter-author guide covering the spec 10.3 responsibilities.\n\n## Acceptance Criteria\n- README with a mermaid lifecycle diagram matching spec 11.1 steps 1-9 and the linearization point called out\n- Invariants section maps each spec 11.2 invariant to the code/test that enforces it\n- Adapter guide walks a future adapter author through LogEntry construction and EntryIntake submission (spec 10.3, 10.4)\n- `cargo doc` clean for ca-service public items (missing_docs warnings resolved); doc examples compile as doctests\n\n## Out of Scope\n- Operational runbooks (observability epic, spec 21.2)\n- Read-path and admin documentation (their epics)\n\n## Testing\n- Doctests; CI doc build gate\n\n## Demo\nOpen the rendered README in the repo and `target/doc` locally; adapter guide followed start-to-finish against the mock intake.",
+      "size": "S",
+      "priority": 2,
+      "phase": 3,
+      "deps": [
+        "ca-service-orchestrator"
+      ],
+      "labels": [
+        "ca-service",
+        "docs"
+      ]
+    }
+  ]
+}

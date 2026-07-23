@@ -1,0 +1,189 @@
+{
+  "epic": {
+    "slug": "pruning-retention",
+    "title": "Pruning & Retention",
+    "description": "Implements spec section 15 Pruning and Retention: a primary-only (lease-enforced) pruning workflow that records signed pruning checkpoints (pruned_range = [start, end) at tree_size T), advances a replicated watermark, and removes leaf objects only after S3 Object Lock (Compliance mode) retention has expired. Includes the OQ-7 orchestration decision (Step Functions vs Lambda chain), pruning-worker Lambda plus CDK synth-tested infrastructure, configurable retention policy (default 7 years; pruning checkpoints retained indefinitely), and end-to-end LocalStack validation of Object Lock semantics, plus the mtcctl prune CLI/admin surface (spec 17.3), post-pruning fixture, pruning-failure runbook, and observability hooks. Revocation is a separate parallel epic (25.6) and is out of scope here."
+  },
+  "tickets": [
+    {
+      "slug": "prune-workflow-adr",
+      "title": "ADR: resolve OQ-7 — Step Functions vs simple Lambda chain for pruning",
+      "description": "## Goal\nResolve OQ-7 (§26): choose Step Functions or a simple Lambda chain for the pruning workflow (§15.2, Phase 7 §24), recorded as an ADR that downstream tickets implement.\n\n## Acceptance Criteria\n- ADR committed under `docs/adr/` comparing both options on: LocalStack fidelity, retry/failure semantics, local debuggability, CDK complexity, agent-driven testability\n- ADR ends with an explicit Decision and Consequences section naming the chosen mechanism unambiguously (no \"either could work\" hedging)\n- Spike script checked in that executes a trivial state machine (or chained Lambda) against LocalStack, proving the chosen mechanism runs locally\n- ADR restates the local-only constraint (§1 non-goals: no production cloud spend) and how the choice honors it\n\n## Out of Scope\n- Implementing the pruning workflow itself (prune-stepfn-workflow)\n- CDK constructs (prune-cdk-workflow)\n\n## Testing\n- Spike integration check against LocalStack; no permanent test suite obligations beyond the committed spike script\n\n## Demo\n`make demo` env up, then run the spike script and show a successful execution in LocalStack logs.",
+      "size": "S",
+      "priority": 1,
+      "phase": 7,
+      "deps": ["localstack-dev-env"],
+      "labels": ["pruning", "adr"]
+    },
+    {
+      "slug": "prune-checkpoint-format",
+      "title": "PruningCheckpoint domain type, wire serialization, and fuzz target",
+      "description": "## Goal\nDefine the pruning checkpoint structure — a signed declaration of `pruned_range = [start, end) at tree_size T` (§15.2) — with newtype-based domain types (§22) and wire serialization.\n\n## Acceptance Criteria\n- `PruningCheckpoint` type: leaf-index range, tree_size, timestamp, signing key id; invalid ranges (start > end, end > tree_size) unconstructible or rejected on parse\n- Serialize/parse implemented in the mtc wire-format style; `parse(serialize(x)) == x` round-trip property test (§19.2)\n- Malformed input rejected without panic\n- Fuzz target `fuzz/fuzz_targets/parse_pruning_checkpoint.rs` with seed corpus checked into `fuzz/corpus/` (§19.3); bug-finding inputs become regression fixtures\n\n## Out of Scope\n- Signing (prune-checkpoint-signer)\n- Persistence/commit (prune-commit-protocol)\n\n## Testing\n- Unit, property (proptest round-trip), fuzz (cargo-fuzz)\n\n## Demo\n`cargo test -p mtc-core pruning_checkpoint` green; `cargo fuzz run parse_pruning_checkpoint -- -max_total_time=60` finds no crashes.",
+      "size": "M",
+      "priority": 1,
+      "phase": 7,
+      "deps": ["core-mtc-types", "mtc-serialization"],
+      "labels": ["pruning", "core"]
+    },
+    {
+      "slug": "prune-retention-policy",
+      "title": "RetentionPolicy config: 7-year default, configurable, indefinite pruning checkpoints",
+      "description": "## Goal\nImplement the retention policy configuration: default 7 years, configurable (§15.1); computes `retain_until` for entries/tiles/checkpoints; pruning checkpoints retained indefinitely (§15.3).\n\n## Acceptance Criteria\n- `RetentionPolicy` type parsed from service config with 7-year default; validation rejects zero/negative durations\n- Helper computing `retain_until: SystemTime` for a given write time, used by ObjectLock `put_with_retention` call sites (§9.1)\n- Pruning-checkpoint object class returns an indefinite/max sentinel retention\n- Dev-mode override permitting short retention (minutes) so pruning is demoable on a laptop with the fake clock (§18.4)\n\n## Out of Scope\n- S3 lifecycle CDK rules (prune-cdk-lifecycle)\n- Prunable-range computation (prune-planner)\n\n## Testing\n- Unit (boundary math, config parsing), property (retain_until monotonic in write time)\n\n## Demo\n`cargo test -p ca-pruning retention_policy`; demo env config shows short dev retention in `mtcctl status` output.",
+      "size": "S",
+      "priority": 1,
+      "phase": 7,
+      "deps": ["core-mtc-types"],
+      "labels": ["pruning", "core"]
+    },
+    {
+      "slug": "prune-watermark-state",
+      "title": "Pruning watermark item in coordination table with epoch-conditional writes",
+      "description": "## Goal\nExtend the DDB coordination table with a `latest-pruning` SK item following the §8.2 item pattern (mirroring `latest-checkpoint`/`latest-revocation`): pruned_end, tree_size, s3_key, signed_at, epoch — written only with epoch condition (§8.3).\n\n## Acceptance Criteria\n- Storage facade methods to read and advance the watermark; advance includes `epoch` in ConditionExpression\n- ConditionalCheckFailed surfaces as a typed lost-lease error (per §25.4 pattern)\n- Watermark only moves forward; regression attempts rejected\n- Memory backend parity: same behavior under `cloud-memory`\n- Integration test against LocalStack DDB\n\n## Out of Scope\n- Commit sequence orchestration (prune-commit-protocol)\n- CLI display (prune-cli-admin)\n\n## Testing\n- Unit (memory backend), integration (LocalStack DDB)\n\n## Demo\nAfter merge: in demo env, seed a watermark via test helper and read it back with a debug command showing the `latest-pruning` item.",
+      "size": "S",
+      "priority": 1,
+      "phase": 7,
+      "deps": ["storage-facade-core", "lease-epoch-protocol"],
+      "labels": ["pruning", "storage"]
+    },
+    {
+      "slug": "prune-planner",
+      "title": "Pruning planner: compute prunable range and object set honoring retention",
+      "description": "## Goal\nCompute the candidate `pruned_range = [start, end)` and the exact set of leaf/entry objects eligible for deletion, given retention policy, injected clock, current watermark, and tree size (§15.2). Interior nodes are retained as needed via the tile structure.\n\n## Acceptance Criteria\n- Planner never includes an entry whose Object Lock retention (via `get_retention`, §9.1) has not expired\n- Output range is well-formed: watermark <= start <= end <= tree_size; deterministic given inputs\n- Object-key set covers only pruned leaf/entry objects; tiles required for inclusion proofs of unpruned entries are never listed (§15.2)\n- Uses injected `Clock` (§18.4, §22.11) — no wall-clock reads\n\n## Out of Scope\n- Signing/commit (prune-commit-protocol); deletion (prune-deletion-executor)\n- Proof-preservation property suite (prune-proof-property)\n\n## Testing\n- Unit, property (never prunes within retention window), Kani harness on range arithmetic (no overflow; well-formed range invariant)\n\n## Demo\n`cargo test -p ca-pruning planner`; dry-run helper prints planned range against a fixture tree.",
+      "size": "M",
+      "priority": 1,
+      "phase": 7,
+      "deps": ["tree-primitives", "prune-retention-policy", "storage-facade-core"],
+      "labels": ["pruning", "core"]
+    },
+    {
+      "slug": "prune-checkpoint-signer",
+      "title": "Sign pruning checkpoints with dedicated HSM-backed pruning key",
+      "description": "## Goal\nSign `PruningCheckpoint` declarations with the dedicated pruning-checkpoint key (§14.1, ECDSA P-256 in v1) via the `Hsm` trait, reusing checkpoint-signer plumbing; pruning is never silent (§15.1).\n\n## Acceptance Criteria\n- Sign/verify functions for pruning checkpoints; signature verifies against the published pruning key\n- Key id distinct from the log checkpoint signing key (§14.1 key table)\n- Works against memory HSM and SoftHSM PKCS#11; SoftHSM path marked non-FIPS via `is_fips_validated()` (§14.4)\n- Verification failure on tampered bytes covered by test\n\n## Out of Scope\n- Commit/persistence sequence (prune-commit-protocol)\n- Key ceremony / rotation tooling (operational-tooling epic)\n\n## Testing\n- Unit (memory HSM backend), integration (SoftHSM via PKCS#11)\n\n## Demo\nIn demo env: helper command signs a sample pruning declaration with SoftHSM and verifies it, printing the key id used.",
+      "size": "S",
+      "priority": 1,
+      "phase": 7,
+      "deps": ["prune-checkpoint-format", "checkpoint-signer", "softhsm-backend"],
+      "labels": ["pruning", "hsm"]
+    },
+    {
+      "slug": "prune-commit-protocol",
+      "title": "Pruning commit sequence: sign, persist checkpoint, advance watermark (primary-only)",
+      "description": "## Goal\nImplement the commit half of §15.2: plan -> sign -> persist pruning checkpoint to S3 with indefinite retention (§15.3) -> advance DDB watermark epoch-conditionally. Runs only on the primary (lease-enforced).\n\n## Acceptance Criteria\n- Checkpoint stored under the checkpoints prefix via `put_with_retention` with indefinite/max retention; bytes immutable thereafter (§8 invariants)\n- Watermark advance uses epoch ConditionExpression; epoch bump mid-commit aborts cleanly with no watermark change\n- Standby (non-leaseholder) refuses to run the commit\n- No deletion performed in this step (deletion is a separate, later step)\n- Pruning event record (range, tree_size, timestamp, operator/trigger) appended for the compliance Pruning log (§20.3)\n- Retry after partial failure is idempotent\n\n## Out of Scope\n- Deletion executor (prune-deletion-executor); workflow orchestration (prune-stepfn-workflow)\n\n## Testing\n- Unit (memory backends), integration (LocalStack S3 + DDB), failure-injection test for mid-commit epoch bump\n\n## Demo\nDemo env: invoke commit step; show new pruning checkpoint object in LocalStack S3 and advanced `latest-pruning` item.",
+      "size": "M",
+      "priority": 1,
+      "phase": 7,
+      "deps": ["prune-checkpoint-signer", "prune-watermark-state", "prune-planner", "lease-epoch-protocol"],
+      "labels": ["pruning", "core"]
+    },
+    {
+      "slug": "prune-deletion-executor",
+      "title": "Deletion executor: remove pruned leaf objects only after Object Lock expiry",
+      "description": "## Goal\nImplement the deletion step of §15.2: after the pruning checkpoint is committed and replicated, remove leaf/entry objects in the pruned range whose Object Lock retention has expired. §15.2/§8 designate S3 lifecycle as the production removal mechanism (prune-cdk-lifecycle); this executor is the workflow's explicit deletion pass so pruned state is deterministic, observable, and testable on LocalStack, and both must agree on eligibility.\n\n## Acceptance Criteria\n- Deletes only object keys from the planner's set, all below the committed watermark read from the `latest-pruning` item\n- Replication precondition (§15.2 \"after commit + replication\") checked before any delete; configured no-op in single-region dev mode\n- Objects with unexpired retention are skipped and reported, never force-deleted; Compliance-mode AccessDenied treated as an expected, non-fatal outcome (§15.3)\n- Tiles needed for proofs of unpruned entries are never deleted; pruning checkpoints never deleted (§15.3)\n- Partial-failure resume: re-running completes remaining deletes without error\n\n## Out of Scope\n- Workflow orchestration/scheduling (prune-stepfn-workflow)\n- Lifecycle CDK rules (prune-cdk-lifecycle)\n\n## Testing\n- Unit (memory backend), integration (LocalStack Object Lock: delete refused before retain-until, succeeds after)\n\n## Demo\nDemo env with short dev retention: run executor; `awslocal s3api list-objects` shows pruned entries gone, tiles and checkpoints intact.",
+      "size": "M",
+      "priority": 1,
+      "phase": 7,
+      "deps": ["prune-planner", "prune-watermark-state", "storage-facade-core", "aws-backend"],
+      "labels": ["pruning", "storage"]
+    },
+    {
+      "slug": "prune-stepfn-workflow",
+      "title": "Pruning workflow orchestration (Step Functions per ADR) + pruning-worker Lambda",
+      "description": "## Goal\nOrchestrate plan -> commit -> delete as the pruning workflow (Phase 7 §24; §7 pruning-worker Lambda), per the OQ-7 ADR decision, runnable end-to-end on LocalStack.\n\n## Acceptance Criteria\n- State machine (or Lambda chain per ADR) definition wiring planner, commit protocol, and deletion executor as steps with retries and terminal failure states\n- `pruning-worker` Lambda handler binary in the workspace invoking the shared crates\n- Scheduled trigger (EventBridge) with fast dev cadence; manual trigger supported\n- Workflow no-ops safely when lease not held or nothing is prunable\n- Execution observable in LocalStack (status queryable per execution)\n\n## Out of Scope\n- CDK constructs and synth assertions (prune-cdk-workflow)\n- CLI trigger (prune-cli-admin)\n\n## Testing\n- Integration (LocalStack Step Functions execution happy path + failure-state path), unit for handler input/output shapes\n\n## Demo\n`make demo`, then start an execution via `awslocal stepfunctions start-execution` and watch it advance the watermark shown in the admin API.",
+      "size": "M",
+      "priority": 1,
+      "phase": 7,
+      "deps": ["prune-workflow-adr", "prune-commit-protocol", "prune-deletion-executor", "localstack-dev-env"],
+      "labels": ["pruning", "workflow"]
+    },
+    {
+      "slug": "prune-cdk-workflow",
+      "title": "CDK constructs for pruning workflow: state machine, Lambda, schedule (synth-only)",
+      "description": "## Goal\nAdd CDK (TypeScript) constructs for the pruning workflow: state machine, pruning-worker Lambda, and EventBridge schedule (§5, §7), validated by `cdk synth` assertions only (§1 non-goals: no cloud deploy).\n\n## Acceptance Criteria\n- Constructs added to the CDK app matching the OQ-7 ADR decision\n- Synth assertion tests verify: state machine states/retry config, Lambda runtime + env wiring, schedule rule targeting the workflow\n- Least-privilege IAM statements asserted (workflow can only touch log bucket prefixes and coordination table)\n- No test requires AWS credentials or network\n\n## Out of Scope\n- S3 lifecycle and Object Lock bucket config (prune-cdk-lifecycle)\n- Workflow runtime logic (prune-stepfn-workflow)\n\n## Testing\n- CDK synth assertion tests (Jest) in the infra package; runs in CI unit lane\n\n## Demo\n`npm test` in the CDK package green; `cdk synth` emits the pruning state machine and Lambda in the template.",
+      "size": "S",
+      "priority": 2,
+      "phase": 7,
+      "deps": ["cdk-skeleton", "prune-workflow-adr"],
+      "labels": ["pruning", "cdk", "infra"]
+    },
+    {
+      "slug": "prune-cdk-lifecycle",
+      "title": "CDK: S3 lifecycle + Object Lock Compliance config aligned with retention policy (synth-only)",
+      "description": "## Goal\nEncode §8 and §15.3 storage invariants in CDK: Object Lock in Compliance mode, lifecycle rules that delete pruned leaf objects only after retention expiry (§8 S3 invariants, §15.2), CRR preserving Object Lock attributes — all validated via `cdk synth` assertions.\n\n## Acceptance Criteria\n- Synth assertions: bucket has Object Lock enabled in Compliance mode with default retention matching `RetentionPolicy` (7 years)\n- Lifecycle expiration on the entries prefix is >= the Object Lock retention window (deletion only after lock expiry, §8)\n- Pruning-checkpoint prefix excluded from lifecycle expiration (indefinite retention, §15.3)\n- Replication configuration asserts Object Lock metadata is preserved (CRR, §15.3)\n- Versioning enabled asserted (defense in depth, §8)\n\n## Out of Scope\n- Runtime deletion logic (prune-deletion-executor)\n- LocalStack E2E validation (prune-objectlock-e2e)\n\n## Testing\n- CDK synth assertion tests (Jest); no cloud access\n\n## Demo\n`npm test` in the CDK package green; template diff shows lifecycle + Object Lock configuration.",
+      "size": "S",
+      "priority": 2,
+      "phase": 7,
+      "deps": ["cdk-skeleton", "prune-retention-policy"],
+      "labels": ["pruning", "cdk", "infra"]
+    },
+    {
+      "slug": "prune-objectlock-e2e",
+      "title": "Object Lock retention validated end-to-end on LocalStack",
+      "description": "## Goal\nDeliver the Phase 7 obligation \"Object Lock retention validated end-to-end\" (§24): prove on LocalStack that Compliance-mode retention actually enforces append-only storage and that pruning respects it (§15.3, §8).\n\n## Acceptance Criteria\n- E2E suite: entries written via `put_with_retention` cannot be deleted before retain-until (delete attempt fails)\n- With short dev retention + fake-clock advance (§18.4), the full pruning workflow runs and pruned entries are removed only after expiry\n- Pruning checkpoints survive all pruning runs (indefinite retention, §15.3)\n- Multi-region sim (`make demo-multiregion`, §18.3): replicated objects retain Object Lock attributes across simulated CRR\n- Suite gated behind `--features integration` (§19.1) and wired into CI integration lane\n\n## Out of Scope\n- CDK synth assertions (prune-cdk-lifecycle)\n- CLI-driven scenario test (prune-e2e-demo)\n\n## Testing\n- Integration + E2E against LocalStack (single-region and multi-region sim)\n\n## Demo\n`make demo` then `cargo test --features integration -p pruning objectlock_e2e` — output shows denied-before/allowed-after deletion transcript.",
+      "size": "M",
+      "priority": 1,
+      "phase": 7,
+      "deps": ["prune-stepfn-workflow", "aws-backend", "EXTERNAL:fake-clock time-advance control (make time-advance, spec 18.4, local-dev-experience epic)", "EXTERNAL:multi-region simulated environment (make demo-multiregion, spec 18.3, local-dev-experience epic)"],
+      "labels": ["pruning", "testing"]
+    },
+    {
+      "slug": "prune-proof-property",
+      "title": "Property tests: pruning preserves proofs for unpruned entries",
+      "description": "## Goal\nImplement the §19.2 invariant: \"Pruning a range and verifying a proof for an unpruned entry still works,\" plus tile-retention sufficiency (§15.2: interior nodes retained naturally by tile structure).\n\n## Acceptance Criteria\n- proptest strategy generates trees of arbitrary size, applies planner-produced pruned ranges, then asserts inclusion proofs verify for every unpruned index\n- Negative control: removing a tile the planner marked as retained causes proof verification to fail (demonstrates the retained set is tight and necessary)\n- Shrunk counterexamples from any failure captured as permanent regression fixtures (§19.3 corpus discipline)\n- Runs in the fast unit lane (<30s, §19.1) with bounded case counts; extended case count behind a feature/env flag\n\n## Out of Scope\n- Planner implementation changes (prune-planner) beyond bug fixes the tests surface\n\n## Testing\n- Property (proptest), unit regression fixtures\n\n## Demo\n`cargo test -p ca-pruning proof_preservation` green; run with `PROPTEST_CASES=10000` for the extended sweep.",
+      "size": "S",
+      "priority": 1,
+      "phase": 7,
+      "deps": ["tree-primitives", "prune-planner"],
+      "labels": ["pruning", "testing"]
+    },
+    {
+      "slug": "prune-cli-admin",
+      "title": "mtcctl prune status/run + admin API endpoints via OpenAPI",
+      "description": "## Goal\nExpose pruning to operators per §17.3: `mtcctl prune status` (watermark + pending work) and `mtcctl prune run` (trigger workflow, privileged), backed by admin API routes defined in the OpenAPI spec so CLI and UI share one boundary (§17.1, §17.2, §17.5).\n\n## Acceptance Criteria\n- OpenAPI paths for prune status and prune run; generated client consumed by the CLI (no hand-rolled HTTP)\n- `prune status` shows current watermark, last pruning checkpoint, and planner dry-run pending-work summary; supports `--output json` (§17.3)\n- `prune run` is privileged: requires `--confirm` or interactive confirmation, skippable with `--yes` (§17.3); triggers a workflow execution, returns execution id; call recorded for the admin-actions audit log (§20.3)\n- Sensible errors when standby (not primary) or when nothing is prunable\n- UI can consume the same endpoints (data shape documented); UI tile itself is admin-surface epic work\n\n## Out of Scope\n- Admin UI rendering of pruning watermark (admin-surface epic)\n- Workflow internals\n\n## Testing\n- Unit (route handlers on memory backend), integration (CLI against demo env), E2E smoke\n\n## Demo\n`make demo`; `mtcctl prune status`; `mtcctl prune run --yes` then `mtcctl prune status` shows advanced watermark.",
+      "size": "M",
+      "priority": 2,
+      "phase": 7,
+      "deps": ["admin-api-core", "openapi-codegen-pipeline", "prune-watermark-state", "prune-planner", "prune-stepfn-workflow"],
+      "labels": ["pruning", "cli", "api"]
+    },
+    {
+      "slug": "prune-e2e-demo",
+      "title": "E2E scenario test: issue then prune via mtcctl in tests/e2e",
+      "description": "## Goal\nCover the pruning leg of the §19.1 demo scenario (\"issue -> verify -> revoke -> prune\") as an E2E test in `tests/e2e/` driving `mtcctl` against the full demo environment.\n\n## Acceptance Criteria\n- Script (shell or Rust per §19.1) that: issues certs, advances the fake clock past dev retention, runs `mtcctl prune run --yes`, and asserts the watermark advanced\n- Asserts inclusion proofs for unpruned entries still verify via `mtcctl` after pruning\n- Asserts pruned indices are reported as pruned: `mtcctl prune status` shows the watermark above them and a proof request for a pruned index fails with a clear pruned/gone status, not an internal error (§20.2 forensics direction)\n- Wired into the CI integration/E2E lane; runs green from a clean `make demo`\n\n## Out of Scope\n- Revocation leg of the scenario (revocation epic)\n- Object Lock semantics validation (prune-objectlock-e2e)\n\n## Testing\n- E2E (CLI-driven against demo env)\n\n## Demo\n`./tests/e2e/prune.sh` (or `make e2e-prune`) runs the full scenario and prints the before/after watermark.",
+      "size": "S",
+      "priority": 2,
+      "phase": 7,
+      "deps": ["prune-cli-admin", "EXTERNAL:e2e test harness conventions in tests/e2e (testing-infrastructure epic, spec 19.1)", "EXTERNAL:fake-clock time-advance control (make time-advance, spec 18.4, local-dev-experience epic)"],
+      "labels": ["pruning", "testing", "e2e"]
+    },
+    {
+      "slug": "prune-fixture-post-pruning",
+      "title": "Deterministic post-pruning fixture: make fixture-load name=post-pruning",
+      "description": "## Goal\nProvide the `post-pruning` deterministic fixture promised in §18.5: a snapshot of LocalStack + DDB state after a pruning run, loadable for bug reproduction, performance testing, and demos.\n\n## Acceptance Criteria\n- `make fixture-load name=post-pruning` restores a state with a nonzero pruning watermark, at least one pruning checkpoint, pruned entry gaps, and intact tiles for unpruned proofs\n- Fixture generation is scripted and reproducible (regenerate from seed, not hand-edited blobs)\n- After load, `mtcctl prune status` and proof verification for an unpruned entry both succeed\n- Fixture documented alongside the other fixtures (§18.5)\n- Used by at least one integration or E2E test as its starting state\n\n## Out of Scope\n- Fixture snapshot/restore infrastructure itself (local-dev-experience epic)\n\n## Testing\n- Integration smoke: load fixture, assert expected watermark and object layout\n\n## Demo\n`make fixture-load name=post-pruning` then `mtcctl prune status` shows the fixture's watermark instantly — no long pruning run needed.",
+      "size": "S",
+      "priority": 2,
+      "phase": 7,
+      "deps": ["prune-stepfn-workflow", "EXTERNAL:fixture-load snapshot infrastructure (spec 18.5, local-dev-experience epic)"],
+      "labels": ["pruning", "devex"]
+    },
+    {
+      "slug": "prune-runbook",
+      "title": "Runbook: pruning failure (docs/runbooks/pruning-failure.md)",
+      "description": "## Goal\nWrite the required \"pruning failure\" runbook (§21.2) in `docs/runbooks/` following the standard structure: detection, initial assessment, mitigation, recovery, postmortem template.\n\n## Acceptance Criteria\n- Covers concrete failure modes: workflow stuck/failed mid-execution, deletion blocked by unexpired Object Lock at scale, watermark/checkpoint mismatch, pruning-checkpoint signing failure, replication-precondition stall\n- Detection section names the alerts/metrics that fire (cross-referencing prune-metrics-events)\n- Mitigation/recovery steps use real commands (`mtcctl prune status`, `mtcctl prune run`, workflow execution inspection) and were each executed once against the demo env with an induced failure\n- Postmortem template included per §21.2\n\n## Out of Scope\n- Alert wiring itself (observability epic); metric emission (prune-metrics-events)\n\n## Testing\n- Docs lint/link check in CI; one manual walkthrough of recovery steps against demo env recorded in the PR description\n\n## Demo\nInduce a failure in demo env (kill workflow mid-run), then follow the runbook to recovery; watermark ends consistent.",
+      "size": "S",
+      "priority": 2,
+      "phase": 7,
+      "deps": ["prune-stepfn-workflow", "prune-cli-admin"],
+      "labels": ["pruning", "docs", "runbook"]
+    },
+    {
+      "slug": "prune-metrics-events",
+      "title": "Pruning watermark metric, workflow metrics, and compliance event exposure",
+      "description": "## Goal\nEmit the pruning signals the observability surface depends on: always-visible pruning watermark (§20.2 dashboards, tree visualization), workflow outcome metrics, and queryable pruning event records feeding the Pruning log compliance report (§20.3).\n\n## Acceptance Criteria\n- Watermark gauge metric plus per-run metrics: duration, entries pruned, entries skipped (unexpired lock), result status\n- Pruning event records written by the commit step (prune-commit-protocol) are queryable in the shape the compliance reporter needs — \"All pruning events with affected ranges\" (§20.3)\n- Admin API exposes watermark and recent pruning events so the UI tree visualization can render the pruning watermark (§20.2)\n- Metrics emitted in the demo env and visible via the local metrics endpoint\n\n## Out of Scope\n- Dashboards, SLOs, alert definitions, report generation (observability epic)\n- UI rendering (admin-surface epic)\n\n## Testing\n- Unit (event record shape, metric emission), integration (demo env: run workflow, assert metrics/events present)\n\n## Demo\n`make demo`; trigger a prune; local metrics endpoint shows the watermark gauge move and a new pruning event record via the admin API.",
+      "size": "S",
+      "priority": 2,
+      "phase": 7,
+      "deps": ["prune-stepfn-workflow", "admin-api-core", "EXTERNAL:metrics/observability emission pipeline (self-auditor-observability epic, spec 20)"],
+      "labels": ["pruning", "observability"]
+    }
+  ]
+}

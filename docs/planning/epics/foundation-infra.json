@@ -1,0 +1,189 @@
+{
+  "epic": {
+    "slug": "foundation-infra",
+    "title": "Foundation & Infrastructure",
+    "description": "Establish the repository's structural backbone per spec Phase 0 (§24): the Cargo workspace and strict lint regime (§22.12), CI/CD with the required checks of §22.13, the TypeScript CDK skeleton targeting cdk-synth correctness and LocalStack only (§1 non-goals, §4), the LocalStack+SoftHSM local dev environment (§18.1), the OpenAPI codegen pipeline that unblocks the admin surface (§17.2, §25.5), and license/supply-chain policy tooling (§6). Everything runs on a laptop with zero cloud spend; no real AWS deployment is in scope."
+  },
+  "tickets": [
+    {
+      "slug": "cargo-workspace",
+      "title": "Cargo workspace scaffolding with pinned toolchain and workspace lints baseline",
+      "description": "## Goal\nEstablish the Rust Cargo workspace at the repo root per §4 (repo split: `crates/` Rust, `infra/` TS) and the §9.3 crate-layout conventions, so every downstream epic can add crates without re-deciding structure.\n\n## Acceptance Criteria\n- Root `Cargo.toml` defines `[workspace]` (resolver 2), `workspace.package` (edition, rust-version, license, repository) and `workspace.dependencies` pinning the §4 baseline: tokio, serde, thiserror, eyre/color-eyre, tracing, proptest, pretty_assertions, mockall\n- `rust-toolchain.toml` pins a stable toolchain with rustfmt + clippy components\n- `crates/` exists with one small placeholder lib crate that inherits `lints.workspace = true`, has a doctest, and passes `cargo test`\n- Initial `[workspace.lints]` table with `unsafe_code = \"forbid\"` (§22.12)\n- `cargo build` and `cargo test` are green from a fresh clone\n\n## Out of Scope\n- Strict clippy/rustfmt configuration (fnd-rust-lint-config)\n- CI wiring (ci-pipeline); domain crates (core-mtc-library epic); cloud crates of §9.3 (cloud-abstraction epic)\n\n## Testing\n- Unit: placeholder crate test + doctest prove the `cargo test` and `cargo test --doc` harnesses work (§19.1)\n\n## Demo\nFresh clone → `cargo test` green; `cargo metadata --format-version 1 | jq .workspace_members` shows the workspace.",
+      "size": "S",
+      "priority": 0,
+      "phase": 0,
+      "deps": [],
+      "labels": ["rust", "scaffolding"]
+    },
+    {
+      "slug": "fnd-rust-lint-config",
+      "title": "Strict Rust lint configuration (clippy pedantic/nursery/cargo, rustfmt, unwrap bans)",
+      "description": "## Goal\nImplement the §22.12 linting setup so the compiler and clippy act as agent guardrails (§6, §23 rationale) from the first real crate onward.\n\n## Acceptance Criteria\n- `clippy.toml` and `rustfmt.toml` committed with strict settings per §22.12\n- Workspace lint tables enable `clippy::pedantic`, `clippy::nursery`, `clippy::cargo`; `missing_docs` warned on all public items; `clippy::unwrap_used` and `clippy::expect_used` denied in non-test code (test code exempt via documented pattern)\n- `unsafe_code = \"forbid\"` retained, with the documented exception policy for future PKCS#11 FFI crates (§22.12)\n- `cargo clippy --all-targets --all-features -- -D warnings` and `cargo fmt --check` pass across the workspace\n- A short doc in `docs/` explains each deviation/allow and how to request one\n\n## Out of Scope\n- Custom dylint lints (fnd-dylint-custom-lints)\n- CI job wiring (ci-pipeline)\n\n## Testing\n- Unit-level: lint config exercised by running clippy/fmt over the whole workspace; a deliberate `unwrap()` in a scratch branch demonstrates denial\n\n## Demo\n`cargo clippy --all-targets --all-features -- -D warnings` passes; adding `foo.unwrap()` to library code makes it fail with the configured lint.",
+      "size": "S",
+      "priority": 1,
+      "phase": 0,
+      "deps": ["cargo-workspace"],
+      "labels": ["rust", "lint"]
+    },
+    {
+      "slug": "ci-pipeline",
+      "title": "CI pipeline with core required Rust checks (fmt, clippy, test, doctest)",
+      "description": "## Goal\nStand up the CI workflow (GitHub Actions) implementing the core required checks of §22.13 so every PR is gated on fmt, clippy, and the full test suite from day one.\n\n## Acceptance Criteria\n- Workflow triggers on PRs and pushes to main; jobs: `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-features`, `cargo test --doc` (§22.13)\n- Rust build caching (e.g., Swatinem/rust-cache) keeps a green run under ~10 minutes on the placeholder workspace\n- Concurrency group cancels superseded runs per branch\n- The list of required status checks (for branch protection) is documented in `docs/`\n- A deliberately broken scratch PR shows red; reverting shows green\n\n## Out of Scope\n- cargo deny/audit jobs (fnd-license-policy); API spec check (fnd-ci-api-spec-check); Kani gate (fnd-ci-kani-gate); infra lane (fnd-ci-infra-checks); LocalStack integration lane (fnd-ci-integration-lane)\n\n## Testing\n- CI-level: validated by a passing test PR and a deliberately failing one (fmt violation) before merge\n\n## Demo\nOpen a trivial PR → `gh pr checks` lists all four Rust checks green; push an unformatted file → fmt check fails.",
+      "size": "M",
+      "priority": 0,
+      "phase": 0,
+      "deps": ["cargo-workspace"],
+      "labels": ["ci"]
+    },
+    {
+      "slug": "fnd-license-policy",
+      "title": "License and supply-chain policy: cargo-deny + cargo-audit as required checks",
+      "description": "## Goal\nEncode the §6 licensing constraints as machine-enforced policy and add the `cargo deny check` and `cargo audit` required checks of §22.13.\n\n## Acceptance Criteria\n- `deny.toml` allows MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause (plus common permissive variants as needed); explicitly denies AGPL-3.0 and other copyleft licenses per the §6 mtc-bridge constraint\n- Advisory checks and duplicate-dependency checks configured in deny.toml (§22.13)\n- `cargo audit` configured (advisory DB, ignore-list file empty with policy note)\n- Both wired as CI jobs on every PR and added to the documented required-checks list\n- Policy rationale documented in `docs/`, citing the §6 license table\n- Negative test performed on a scratch branch: adding a GPL-licensed crate fails `cargo deny check`\n\n## Out of Scope\n- The repository's own LICENSE file (fnd-repo-scaffolding)\n- npm-side license auditing for `infra/` (follow-up ticket if needed)\n\n## Testing\n- CI-level; local negative test with a copyleft crate demonstrates enforcement\n\n## Demo\n`cargo deny check` and `cargo audit` pass locally; `gh pr checks` shows both as required checks on a test PR.",
+      "size": "S",
+      "priority": 1,
+      "phase": 0,
+      "deps": ["ci-pipeline"],
+      "labels": ["ci", "licensing"]
+    },
+    {
+      "slug": "cdk-skeleton",
+      "title": "AWS CDK TypeScript app skeleton in infra/ (synth-only, stack split per spec)",
+      "description": "## Goal\nCreate the CDK TypeScript app skeleton in `infra/` per §4: separate `MtcLogStorageStack` and `MtcComputeStack` behind construct-level abstractions, targeting `cdk synth` correctness only — no real AWS deploys per §1 non-goals.\n\n## Acceptance Criteria\n- `infra/` npm project with pinned Node version and `aws-cdk-lib`; `tsc --strict`, eslint, prettier configured and passing\n- `bin/` app instantiates `MtcLogStorageStack` and `MtcComputeStack` as separate stacks (initially near-empty) per the §4 abstraction note enabling a future Pulumi port\n- `npx cdk synth` produces valid CloudFormation for both stacks\n- Assertions test harness (`aws-cdk-lib/assertions`) in place with at least one Template test per stack\n- `infra/README.md` states the synth-only / LocalStack policy and that no real AWS account is ever targeted (§1, §5 cost notes)\n\n## Out of Scope\n- Real resource modeling (fnd-cdk-storage-stack, fnd-cdk-compute-stack)\n- CI wiring (fnd-ci-infra-checks); SSM config handoff (fnd-cdk-ssm-config-handoff); any `cdk deploy` to real AWS\n\n## Testing\n- Unit: CDK assertions + snapshot tests via the project's JS test runner (§19.1 unit layer)\n\n## Demo\n`cd infra && npm ci && npm test && npx cdk synth` renders both stacks' templates to stdout.",
+      "size": "M",
+      "priority": 1,
+      "phase": 0,
+      "deps": [],
+      "labels": ["cdk", "typescript"]
+    },
+    {
+      "slug": "fnd-cdk-storage-stack",
+      "title": "MtcLogStorageStack: S3 log bucket + DynamoDB coordination table modeled in CDK",
+      "description": "## Goal\nModel the storage layer in `MtcLogStorageStack` per §8: the immutable log bucket (S3 with versioning + Object Lock) and the DynamoDB coordination table — validated purely via synth assertions.\n\n## Acceptance Criteria\n- S3 bucket construct with versioning and Object Lock enabled, lifecycle/retention surface configurable via props, matching the §8.1 layout and S3 invariants (§8 \"S3 invariants\")\n- Bucket prefix layout of §8.1 documented alongside the construct\n- DynamoDB table construct matching the §8.2 schema (key schema, attributes, PITR enabled); Global Tables replication and CRR/RTC expressed as configurable props only — never deployed (§1 non-goals)\n- Assertions tests verify: ObjectLockEnabled, versioning status, table key schema, PITR\n- `npx cdk synth MtcLogStorage*` clean\n\n## Out of Scope\n- Runtime access code (cloud-aws backend, storage-facade epics)\n- Actual multi-region replication behavior (multi-region epic); real deploys\n\n## Testing\n- Unit: CDK assertions on the synthesized template (§19.1)\n\n## Demo\n`cd infra && npm test` green; `npx cdk synth` output shows the bucket with `ObjectLockEnabled: true` and the DDB `KeySchema` from §8.2.",
+      "size": "M",
+      "priority": 2,
+      "phase": 0,
+      "deps": ["cdk-skeleton"],
+      "labels": ["cdk", "storage"]
+    },
+    {
+      "slug": "fnd-cdk-compute-stack",
+      "title": "MtcComputeStack skeleton: Fargate service + Lambda placeholders per component table",
+      "description": "## Goal\nSkeleton `MtcComputeStack` reflecting the §5/§7 component split: ECS Fargate for the write path, Lambda placeholders for read/event components — synth-only.\n\n## Acceptance Criteria\n- Stack accepts storage references via props typed as `aws-cdk-lib` interfaces (`IBucket`, `ITable`) exported by `MtcLogStorageStack`; no hand-rolled types shared across stacks (§4)\n- Placeholder Fargate task definition + service construct for the CA service write path (§5)\n- Placeholder Lambda constructs for proof-server, self-auditor, revocation-processor, pruning-worker, orphan-cleanup (§7 component table)\n- Assertions verify each construct synthesizes with expected logical IDs; `npx cdk synth` clean\n- Placeholders clearly marked; container image / Lambda asset wiring stubbed with dummy assets\n\n## Out of Scope\n- Real container images and Lambda code (ca-service, read-path, observability epics)\n- ALB/Route53/CloudFront details (read-path and multi-region epics); real deploys\n\n## Testing\n- Unit: CDK assertions (§19.1)\n\n## Demo\n`npx cdk synth MtcCompute*` lists one Fargate service and five placeholder Lambdas matching §7.",
+      "size": "S",
+      "priority": 2,
+      "phase": 0,
+      "deps": ["fnd-cdk-storage-stack"],
+      "labels": ["cdk", "compute"]
+    },
+    {
+      "slug": "fnd-cdk-ssm-config-handoff",
+      "title": "TS-to-Rust config handoff: SSM parameter publication convention and constructs",
+      "description": "## Goal\nImplement the §4 config-handoff decision (SSM Parameter Store + env vars) as a documented naming contract plus a small CDK helper construct, keeping the TS↔Rust boundary at the deployment edge with no type sharing.\n\n## Acceptance Criteria\n- Parameter naming convention (e.g., `/mtc/<env>/<component>/<key>`) documented in `docs/` as the contract Rust services read via figment layering (§4 config row)\n- CDK helper construct publishes stack outputs as `AWS::SSM::Parameter` resources under the convention\n- `MtcLogStorageStack` publishes its bucket name and table name via the helper; assertions verify the exact parameter names and values in the synthesized template\n- Contract doc lists the corresponding env-var override names for local dev (LocalStack endpoints, §18)\n\n## Out of Scope\n- Rust-side config loading (service epics)\n- Compute-stack outputs (wired when real resources land in that stack)\n- Secrets handling (HSM credentials belong to cloud-abstraction/ca-service epics)\n\n## Testing\n- Unit: CDK assertions on synthesized SSM parameters (§19.1)\n\n## Demo\n`npx cdk synth` shows `AWS::SSM::Parameter` resources whose names match the documented contract.",
+      "size": "S",
+      "priority": 2,
+      "phase": 0,
+      "deps": ["fnd-cdk-storage-stack"],
+      "labels": ["cdk", "config"]
+    },
+    {
+      "slug": "fnd-ci-infra-checks",
+      "title": "CI lane for infra/: tsc, eslint, CDK assertions, cdk synth",
+      "description": "## Goal\nGate PRs touching `infra/` on the TypeScript toolchain and synth correctness, extending the §22.13 required-checks philosophy to the CDK side.\n\n## Acceptance Criteria\n- Path-filtered CI job runs on changes under `infra/`: `npm ci`, `tsc --noEmit`, eslint, assertions tests, `npx cdk synth` for all stacks\n- node_modules caching keeps the lane under ~5 minutes\n- Job added to the documented required-checks list for infra-touching PRs\n- A scratch PR with a TypeScript type error demonstrates the lane failing\n\n## Out of Scope\n- cdklocal deployment verification (fnd-cdklocal-deploy)\n- Rust CI jobs (ci-pipeline)\n\n## Testing\n- CI-level: validated with one passing and one deliberately failing test PR touching `infra/`\n\n## Demo\nOpen a PR touching `infra/` → `gh pr checks` shows the infra lane running and green; a docs-only PR skips it.",
+      "size": "S",
+      "priority": 1,
+      "phase": 0,
+      "deps": ["ci-pipeline", "cdk-skeleton"],
+      "labels": ["ci", "cdk"]
+    },
+    {
+      "slug": "localstack-dev-env",
+      "title": "LocalStack + SoftHSM2 compose-based local dev environment",
+      "description": "## Goal\nDeliver the zero-cost local simulation environment of §18.1 and §1 non-goals: a compose file bringing up LocalStack (S3 with versioning + Object Lock, DynamoDB) and SoftHSM2, with init scripts matching the §8 data model.\n\n## Acceptance Criteria\n- `docker-compose.yml` with a pinned LocalStack version and healthcheck\n- Init script creates the log bucket (versioning + Object Lock enabled) and the DDB coordination table per §8.1/§8.2\n- SoftHSM2 provisioned (container or scripted local install) with an initialized token and an ECDSA P-256 keypair per the §4 HSM dev row and §14\n- Endpoint/env-var contract documented (`AWS_ENDPOINT_URL`, credentials, PKCS#11 module path) consistent with fnd-cdk-ssm-config-handoff's local-override doc\n- Reset/teardown script restores a clean slate; cold start to healthy in under ~60s on a laptop (§18.1)\n\n## Out of Scope\n- `make demo` orchestration and CA service startup (local-dev-experience epic)\n- Multi-region simulation (§18.3, multi-region epic); the Rust SoftHSM PKCS#11 crate (cloud-abstraction epic)\n\n## Testing\n- Integration: smoke script asserts Object Lock config via awslocal, describes the DDB table, and lists SoftHSM slots via pkcs11-tool (§19.1)\n\n## Demo\n`docker compose up -d && ./scripts/dev-env-smoke.sh` prints all checks green.",
+      "size": "M",
+      "priority": 0,
+      "phase": 0,
+      "deps": [],
+      "labels": ["dev-env", "localstack"]
+    },
+    {
+      "slug": "fnd-ci-integration-lane",
+      "title": "CI integration lane: cargo test --features integration against LocalStack",
+      "description": "## Goal\nAdd the §19.1 integration-test lane to CI: spin up the LocalStack dev environment and run feature-gated integration tests, proving the plumbing before real suites arrive.\n\n## Acceptance Criteria\n- CI job starts the compose environment (LocalStack service container) and runs `cargo test --features integration` (§19.1 gating convention)\n- The `integration` Cargo feature convention is documented in `docs/`\n- A canary integration test ships: S3 put/get and one DDB conditional write against LocalStack\n- Lane completes in under ~10 minutes and is on the documented required-checks list\n- Failure of LocalStack startup fails the job with actionable logs\n\n## Out of Scope\n- Real integration suites (cloud-abstraction, storage-facade, ca-service epics)\n- SoftHSM in CI (follow-up when softhsm-backend lands)\n\n## Testing\n- Integration: the canary test itself; CI-level validation via a test PR\n\n## Demo\n`gh pr checks` shows the integration lane green; locally `docker compose up -d && cargo test --features integration` passes the canary.",
+      "size": "S",
+      "priority": 1,
+      "phase": 0,
+      "deps": ["ci-pipeline", "localstack-dev-env"],
+      "labels": ["ci", "integration"]
+    },
+    {
+      "slug": "fnd-cdklocal-deploy",
+      "title": "Deploy MtcLogStorageStack to LocalStack via cdklocal with smoke assertions",
+      "description": "## Goal\nValidate the CDK storage stack beyond synth by deploying it to LocalStack with `cdklocal`, honoring the §1 non-goal of zero real-AWS spend while proving templates are actually deployable.\n\n## Acceptance Criteria\n- `scripts/cdklocal-deploy.sh` bootstraps and deploys `MtcLogStorageStack` to a running LocalStack\n- Smoke assertions after deploy: bucket exists with versioning + Object Lock, table exists with the §8.2 key schema\n- Script is idempotent (re-run succeeds without manual cleanup)\n- Known LocalStack emulation gaps (e.g., Object Lock fidelity, Global Tables) documented in `infra/README.md`\n\n## Out of Scope\n- Compute stack deployment (no real images yet)\n- CI wiring (optional follow-up); any real AWS account usage\n\n## Testing\n- Integration: deploy + assertion script against LocalStack (§19.1)\n\n## Demo\n`docker compose up -d && ./scripts/cdklocal-deploy.sh` then `awslocal s3api get-object-lock-configuration --bucket <log-bucket>` shows Object Lock enabled.",
+      "size": "S",
+      "priority": 2,
+      "phase": 0,
+      "deps": ["fnd-cdk-storage-stack", "localstack-dev-env"],
+      "labels": ["cdk", "localstack"]
+    },
+    {
+      "slug": "openapi-codegen-pipeline",
+      "title": "OpenAPI spec seed + Rust code generation pipeline (server stubs, client)",
+      "description": "## Goal\nCreate `api/admin.openapi.yaml` and the Rust side of the §17.2 codegen pipeline: an axum-compatible server-stub crate and a Rust client crate. Critical path: blocks all admin UI/CLI work (§25.5).\n\n## Acceptance Criteria\n- Seed spec defines `/healthz`, `/readyz` (§20.5) and a minimal `/status` (§17.3) with typed schemas\n- Spec lint (redocly or spectral) configured and passing\n- One regeneration entrypoint (`scripts/api-gen.sh` or cargo xtask) generates an axum-compatible Rust server-stub crate and a Rust client crate (§17.2)\n- Generated code is committed; regeneration is deterministic so drift is detectable by diff\n- Generated Rust crates compile in the workspace; a trivial test round-trips a `/status` response type through the client types\n\n## Out of Scope\n- TypeScript client, HTML API docs, and the §17.5 workflow doc (fnd-openapi-ts-client-docs)\n- Real endpoint implementations and UI/CLI wiring (admin-surface epic)\n- `make api-gen` target (local-dev-experience); CI enforcement (fnd-ci-api-spec-check)\n\n## Testing\n- Unit: generated crates compile + type round-trip test; spec lint runs in the regen entrypoint (§19.1)\n\n## Demo\nAdd a field to the `/status` schema, run `./scripts/api-gen.sh`, watch the server stub and client types regenerate deterministically.",
+      "size": "M",
+      "priority": 0,
+      "phase": 0,
+      "deps": [],
+      "labels": ["api", "codegen"]
+    },
+    {
+      "slug": "fnd-openapi-ts-client-docs",
+      "title": "OpenAPI pipeline: TypeScript client, HTML API docs, add-an-endpoint workflow doc",
+      "description": "## Goal\nExtend the §17.2 codegen pipeline to emit the TypeScript client and HTML API documentation, and document the §17.5 add-an-endpoint workflow so admin UI/CLI work has a complete contract surface.\n\n## Acceptance Criteria\n- The existing regeneration entrypoint additionally generates a TypeScript client package from `api/admin.openapi.yaml` (§17.2); `tsc --noEmit` passes on the generated package\n- HTML API docs generated (e.g., redoc/redocly build) with a single command; output location documented\n- Generated TS output is committed and deterministic so drift is detectable by diff (same convention as the Rust side)\n- `docs/` page documents the §17.5 workflow: update OpenAPI → regenerate → implement server method → wire into CLI command and UI handler\n- One entrypoint still regenerates everything (Rust + TS + docs) in a single run\n\n## Out of Scope\n- Admin UI/CLI consumption of the clients (admin-surface epic)\n- CI drift/breaking-change enforcement (fnd-ci-api-spec-check)\n\n## Testing\n- Unit: `tsc --noEmit` over the generated client; deterministic-output check by double-run diff (§19.1)\n\n## Demo\nRun `./scripts/api-gen.sh`, then open the generated HTML docs page showing `/healthz`, `/readyz`, and `/status`.",
+      "size": "S",
+      "priority": 1,
+      "phase": 0,
+      "deps": ["openapi-codegen-pipeline"],
+      "labels": ["api", "codegen", "typescript"]
+    },
+    {
+      "slug": "fnd-ci-api-spec-check",
+      "title": "CI check: API spec validation, breaking-change detection, codegen drift",
+      "description": "## Goal\nImplement the §22.13 required check \"API spec validates (no breaking changes without explicit override)\" plus a generated-code drift gate.\n\n## Acceptance Criteria\n- CI job lints `api/admin.openapi.yaml` (same linter as the pipeline)\n- Breaking-change detection (e.g., oasdiff) compares the PR spec against main and fails on breaking changes\n- Override mechanism: a documented PR label (e.g., `api-breaking-approved`) allows the check to pass, with the override recorded in the job log\n- Drift check: regenerate code in CI and fail if the committed generated code differs\n- Job added to the documented required-checks list; negative-tested with a scratch PR that removes a response field\n\n## Out of Scope\n- The codegen pipeline itself (openapi-codegen-pipeline)\n- Versioning/publishing of clients (post-v1)\n\n## Testing\n- CI-level: one passing PR, one breaking-change PR without label (fails), same PR with label (passes)\n\n## Demo\nPR renaming a `/status` response field → check fails with the oasdiff report; apply the override label → check passes.",
+      "size": "S",
+      "priority": 1,
+      "phase": 0,
+      "deps": ["ci-pipeline", "openapi-codegen-pipeline"],
+      "labels": ["ci", "api"]
+    },
+    {
+      "slug": "fnd-repo-scaffolding",
+      "title": "Repo scaffolding: README, LICENSE, editorconfig, directory conventions, CONTRIBUTING",
+      "description": "## Goal\nShip the top-level repo scaffolding so humans and agents share one map of the repository, reflecting the §1 premise (reference blueprint, no production deployment) and the §4 repo split.\n\n## Acceptance Criteria\n- `README.md`: project premise and explicit §1 non-goals (no production deployment, zero cloud spend), repo layout table (`crates/`, `infra/`, `api/`, `docs/`, `scripts/`, `tests/e2e/` per §4 and §19.1), quickstart pointer\n- `LICENSE` file (permissive, consistent with the §6 licensing posture); `workspace.package.license` matches\n- `.editorconfig` covering Rust, TypeScript, YAML, Markdown; `.gitignore` covers Rust target/, node_modules, cdk.out, LocalStack volumes\n- `CONTRIBUTING.md` summarizing §25.3 PR practices: single reviewable/revertable unit, 200-500 line target, tests in the same PR, rollback plan in every PR description\n\n## Out of Scope\n- `AGENTS.md` / `.claude/` content (agent-harnessing epic)\n- Makefile and make targets (local-dev-experience epic)\n\n## Testing\n- Docs-only: no §19.1 code layers apply; validated by review plus a markdown link check if trivially available in CI\n\n## Demo\nRepo landing page renders the README with layout table and non-goals; `cat CONTRIBUTING.md` shows the PR rules.",
+      "size": "S",
+      "priority": 1,
+      "phase": 0,
+      "deps": [],
+      "labels": ["docs", "scaffolding"]
+    },
+    {
+      "slug": "fnd-dylint-custom-lints",
+      "title": "Custom dylint lint infrastructure + no-direct-time lint",
+      "description": "## Goal\nStand up the custom dylint lint infrastructure of §22.12 with the first repo-specific lint: forbid `SystemTime::now()` / `Instant::now()` / `chrono::Utc::now()` outside test code, enforcing the injected `Clock` trait rule (§4, §22.11).\n\n## Acceptance Criteria\n- Dylint lint library under `lints/` with pinned toolchain compatible with the workspace\n- `no_direct_time` lint flags direct time calls in non-`#[cfg(test)]` code with a diagnostic pointing to the `Clock` trait (§22.11)\n- UI tests cover: violation in lib code (fails), usage in test module (allowed), Clock-trait usage (allowed)\n- Runner script executes dylint across the workspace; CI job added and on the documented required-checks list\n- `docs/` page explains how to add the next custom lint\n\n## Out of Scope\n- Additional repo-specific lints (future tickets as patterns emerge)\n- The `Clock` trait itself (core-mtc-library epic)\n\n## Testing\n- Unit: dylint UI tests (§19.1); CI-level validation on a scratch PR containing `SystemTime::now()`\n\n## Demo\nAdd `SystemTime::now()` to a library target → dylint fails locally and in CI with the Clock-trait guidance message.",
+      "size": "M",
+      "priority": 2,
+      "phase": 0,
+      "deps": ["ci-pipeline"],
+      "labels": ["rust", "lint"]
+    },
+    {
+      "slug": "fnd-ci-kani-gate",
+      "title": "Path-filtered cargo kani CI gate for critical-path crates",
+      "description": "## Goal\nImplement the conditional §22.13 required check: `cargo kani` runs for PRs touching critical-path crates, so formal verification proofs gate exactly the code they protect (§19.12, §22).\n\n## Acceptance Criteria\n- CI config holds an explicit list of critical-path crates/paths (initially tree primitives; lease/epoch crates added by the multi-region epic later)\n- Job installs a pinned Kani version and runs `cargo kani` for the affected crates only when those paths change\n- PRs not touching critical paths skip the job (and it does not block them)\n- Runtime budget and the procedure for adding a crate to the critical list documented in `docs/`\n- Validated against the first merged Kani harness\n\n## Out of Scope\n- Writing Kani harnesses (core-mtc-library and multi-region epics own their proofs)\n- Loom/Shuttle CI lanes (testing-infrastructure epic)\n\n## Testing\n- Kani: executes existing harnesses; CI-level validation with one critical-path PR and one unrelated PR\n\n## Demo\nPR touching a critical crate → `gh pr checks` shows the kani job running proofs; a docs-only PR shows it skipped.",
+      "size": "S",
+      "priority": 1,
+      "phase": 1,
+      "deps": ["ci-pipeline", "EXTERNAL:first Kani harness merged in a critical-path crate (core-mtc-library, Phase 1)"],
+      "labels": ["ci", "formal-verification"]
+    }
+  ]
+}

@@ -1,0 +1,195 @@
+{
+ "epic": {
+  "slug": "multi-cloud",
+  "title": "Multi-Cloud Backends (post-v1)",
+  "description": "Post-v1 backlog implementing the §27 multi-cloud story: GCP, Azure, and on-premise backend implementations of the §9 cloud abstraction traits (ObjectStore, ObjectLock, ReplicatedKv, Hsm), a Pulumi-based multi-cloud IaC track (§27.5), replication-lag-aware failover support (§27.2), and systematic portability validation (§27.6) via a cross-backend test matrix, a capability probe for long-tail clouds (§27.4), and portability documentation. Everything runs on a laptop against emulators (fake-gcs-server, Firestore emulator, Azurite, Cosmos stub/emulator, MinIO, etcd) and mocks — no real cloud accounts or spend, per §1 non-goals. Boundary: the v1 AWS/memory/LocalStack/SoftHSM backends belong to the cloud-abstraction epic, not here."
+ },
+ "tickets": [
+  {
+   "slug": "mcloud-gcp-object-storage",
+   "title": "GCP backend: GCS ObjectStore + Object Retention Lock",
+   "description": "## Goal\nImplement the `ObjectStore` and `ObjectLock` traits (§9) for Google Cloud Storage in a new `crates/cloud-gcp/` crate, using GCS Object Retention Lock for compliance-mode retention (§27.1, §27.2).\n\n## Acceptance Criteria\n- `crates/cloud-gcp/` crate with `GcsObjectStore` implementing `ObjectStore` and `ObjectLock` from `cloud-types`\n- Retention semantics mirror S3 Object Lock Compliance mode: delete before retain-until is rejected with a typed error (§27.2)\n- Shared `cloud-test-suite` conformance tests (§9.7) pass against fake-gcs-server in docker compose\n- Retention behaviors the emulator cannot express are covered by contract tests against an in-process stub; gaps listed in the crate README\n- GCP dependencies feature-gated so default workspace builds are unaffected\n\n## Out of Scope\n- Firestore ReplicatedKv and Cloud HSM (mcloud-gcp-kv-hsm)\n- Pulumi infra for GCP (mcloud-pulumi-iac); CI matrix wiring (mcloud-test-matrix)\n\n## Testing\n- Unit tests for request/response and error mapping; integration via the shared conformance suite against fake-gcs-server (§19.1). No Kani/Loom/fuzz layers apply.\n\n## Demo\n`docker compose --profile gcp up -d && cargo test -p cloud-gcp --features emulator` — conformance suite green, including a delete-denied-under-retention case.",
+   "size": "M",
+   "priority": 3,
+   "phase": 9,
+   "deps": [
+    "cloud-abstraction-traits",
+    "EXTERNAL:cloud-test-suite shared backend conformance tests (cloud-abstraction epic)"
+   ],
+   "labels": [
+    "multi-cloud",
+    "gcp",
+    "backend"
+   ]
+  },
+  {
+   "slug": "mcloud-gcp-kv-hsm",
+   "title": "GCP backend: Firestore ReplicatedKv + KMS-fronted Cloud HSM",
+   "description": "## Goal\nImplement `ReplicatedKv` on Firestore (transactional version-based CAS) and `Hsm` on GCP Cloud HSM via its KMS-fronted API, in `crates/cloud-gcp/` (§27.1, §27.2).\n\n## Acceptance Criteria\n- `FirestoreKv` implements `ReplicatedKv` using Firestore transactions for compare-and-set; conditional-write semantics required by the lease/epoch protocol match the DynamoDB behavior (§27.2)\n- `GcpKmsHsm` implements `Hsm`; `KeyHandle` encodes a KMS key resource path rather than a PKCS#11 slot (§27.2 HSM differences)\n- Signatures produced through the Hsm impl verify with the core library's verification path\n- Shared conformance suite (§9.7) passes against the Firestore emulator\n- Hsm impl exercised against a local stub of the KMS API; unsupported capabilities return typed errors, never panics\n\n## Out of Scope\n- GCS storage (mcloud-gcp-object-storage); replication-lag probes (mcloud-replication-lag)\n- Multi-region Firestore topology beyond documenting the consistency model (§27.2)\n\n## Testing\n- Unit; property test: concurrent CAS attempts on one key yield exactly one winner per version; integration against the Firestore emulator and KMS stub (§19.1, §19.2).\n\n## Demo\n`docker compose --profile gcp up -d && cargo test -p cloud-gcp --features emulator` — KV conformance plus a lease-style CAS handoff demo test pass.",
+   "size": "M",
+   "priority": 3,
+   "phase": 9,
+   "deps": [
+    "cloud-abstraction-traits",
+    "EXTERNAL:cloud-test-suite shared backend conformance tests (cloud-abstraction epic)"
+   ],
+   "labels": [
+    "multi-cloud",
+    "gcp",
+    "backend",
+    "hsm"
+   ]
+  },
+  {
+   "slug": "mcloud-azure-object-storage",
+   "title": "Azure backend: Blob Storage ObjectStore + Immutable Storage (Locked)",
+   "description": "## Goal\nImplement `ObjectStore` and `ObjectLock` (§9) for Azure Blob Storage in a new `crates/cloud-azure/` crate, using Immutable Storage in Locked mode for compliance retention (§27.1, §27.2).\n\n## Acceptance Criteria\n- `crates/cloud-azure/` crate with `BlobObjectStore` implementing `ObjectStore` and `ObjectLock`\n- Locked immutability policy semantics match S3 Object Lock Compliance mode: no delete/overwrite before retain-until (§27.2)\n- Shared `cloud-test-suite` conformance tests (§9.7) pass against Azurite in docker compose\n- Immutability behaviors Azurite cannot express are contract-tested against an in-process stub; every gap documented in the crate README\n- Azure dependencies feature-gated; default workspace builds unaffected\n\n## Out of Scope\n- Cosmos DB ReplicatedKv and Managed HSM (mcloud-azure-kv-hsm)\n- GRS replication-lag handling (mcloud-replication-lag); Pulumi stacks (mcloud-pulumi-iac)\n\n## Testing\n- Unit tests for API/error mapping; integration via shared conformance suite against Azurite (§19.1). No Kani/Loom/fuzz layers apply.\n\n## Demo\n`docker compose --profile azure up -d && cargo test -p cloud-azure --features emulator` — conformance suite green, including retention-denied deletion case.",
+   "size": "M",
+   "priority": 3,
+   "phase": 9,
+   "deps": [
+    "cloud-abstraction-traits",
+    "EXTERNAL:cloud-test-suite shared backend conformance tests (cloud-abstraction epic)"
+   ],
+   "labels": [
+    "multi-cloud",
+    "azure",
+    "backend"
+   ]
+  },
+  {
+   "slug": "mcloud-azure-kv-hsm",
+   "title": "Azure backend: Cosmos DB ReplicatedKv + Managed HSM",
+   "description": "## Goal\nImplement `ReplicatedKv` on Cosmos DB (ETag-based CAS, bounded-staleness or strong consistency) and `Hsm` on Azure Managed HSM, in `crates/cloud-azure/` (§27.1, §27.2).\n\n## Acceptance Criteria\n- `CosmosKv` implements `ReplicatedKv` using ETag conditional writes; lease/epoch conditional-write semantics match the DynamoDB behavior (§27.2)\n- Consistency-level choice (bounded staleness vs strong, §27.2) is a documented config knob with a safe default\n- `ManagedHsm` implements `Hsm` over the PKCS#11/KMS-style surface (§27.2 HSM table); signatures verify via the core library\n- Shared conformance suite (§9.7) passes against a local Cosmos stub by default; running against the Cosmos DB Linux emulator is supported behind an opt-in flag (it is resource-heavy)\n- Unsupported capabilities return typed errors, never panics\n\n## Out of Scope\n- Blob storage (mcloud-azure-object-storage); replication-lag probes (mcloud-replication-lag)\n- Any real Azure account usage (§1 non-goals)\n\n## Testing\n- Unit; property test: concurrent ETag CAS yields one winner; integration against Cosmos stub, opt-in emulator job (§19.1, §19.2).\n\n## Demo\n`cargo test -p cloud-azure` runs KV conformance against the stub; `docker compose --profile azure-cosmos up -d` enables the emulator-backed run.",
+   "size": "M",
+   "priority": 3,
+   "phase": 9,
+   "deps": [
+    "cloud-abstraction-traits",
+    "EXTERNAL:cloud-test-suite shared backend conformance tests (cloud-abstraction epic)"
+   ],
+   "labels": [
+    "multi-cloud",
+    "azure",
+    "backend",
+    "hsm"
+   ]
+  },
+  {
+   "slug": "mcloud-onprem-backend",
+   "title": "On-prem backend: MinIO ObjectStore/ObjectLock + etcd ReplicatedKv + vendor PKCS#11",
+   "description": "## Goal\nImplement the on-premise backend (§27.3): MinIO for `ObjectStore`/`ObjectLock` (S3-compatible with Object Lock), etcd for `ReplicatedKv` (native CAS), and generalize the PKCS#11 `Hsm` path to accept vendor HSM modules.\n\n## Acceptance Criteria\n- `crates/cloud-onprem/` implementing `ObjectStore`/`ObjectLock` against MinIO (reusing the aws-backend S3-compatible client where sensible) and `ReplicatedKv` on etcd compare-and-swap (§27.2, §27.3)\n- MinIO Object Lock verified equivalent to S3 Compliance mode; application-layer retention enforcement explicitly NOT implemented and documented as unsupported (§27.2)\n- PKCS#11 `Hsm` layer from the SoftHSM backend generalized so a vendor module path (Thales/Utimaco/Entrust, §27.3) is a config value; SoftHSM remains the tested module\n- Dev compose gains `minio` and `etcd` services under an `onprem` profile\n- Shared conformance suite (§9.7) green against MinIO and etcd\n\n## Out of Scope\n- Kubernetes/Knative deployment manifests (§27.3 compute) — documentation only, see mcloud-portability-docs\n- Multi-site MinIO/Ceph replication operations (§27.3); replication-lag probes (mcloud-replication-lag)\n\n## Testing\n- Unit; integration via shared conformance suite against MinIO + etcd in compose; property test for etcd CAS uniqueness (§19.1, §19.2).\n\n## Demo\n`docker compose --profile onprem up -d && cargo test -p cloud-onprem --features compose` — conformance green; MinIO delete-under-retention denied.",
+   "size": "M",
+   "priority": 3,
+   "phase": 9,
+   "deps": [
+    "cloud-abstraction-traits",
+    "aws-backend",
+    "softhsm-backend",
+    "EXTERNAL:cloud-test-suite shared backend conformance tests (cloud-abstraction epic)"
+   ],
+   "labels": [
+    "multi-cloud",
+    "onprem",
+    "backend",
+    "hsm"
+   ]
+  },
+  {
+   "slug": "mcloud-replication-lag",
+   "title": "Per-backend replication-lag probes for failover catchup wait",
+   "description": "## Goal\nImplement the per-backend \"wait for replication catchup\" failover step (§27.2 multi-region replication): a replication-lag observability seam each backend implements so manual failover can bound data loss on any cloud.\n\n## Acceptance Criteria\n- Replication-lag probe API added in `cloud-types` (companion trait or trait method) with implementations for GCP, Azure, and on-prem backends; memory backend reports zero lag\n- Azure implementation uses a conservative, configurable fixed wait window given no published GRS SLA (§27.2 cross-region replication time guarantees)\n- GCS/Turbo-Replication and MinIO implementations surface whatever lag signal the backend exposes; \"unknown\" is a first-class, conservative result\n- Manual failover tooling consumes the probe and surfaces per-backend lag/wait before proceeding\n- Injected lag in memory/emulator backends drives deterministic tests of the wait logic\n\n## Out of Scope\n- Automated failover decisions (§1 non-goals: manual failover only)\n- AWS S3 RTC / DynamoDB lag observability (v1, multi-region epic)\n\n## Testing\n- Unit; property test on wait-window computation monotonicity; integration with injected lag against memory backend and emulators (§19.1, §19.2). No Kani/Loom layers here — lease safety is verified in the multi-region epic.\n\n## Demo\n`mtcctl failover --dry-run --backend onprem` prints per-capability replication lag and the computed wait window.",
+   "size": "M",
+   "priority": 3,
+   "phase": 9,
+   "deps": [
+    "lease-epoch-protocol",
+    "mcloud-gcp-object-storage",
+    "mcloud-gcp-kv-hsm",
+    "mcloud-azure-object-storage",
+    "mcloud-azure-kv-hsm",
+    "mcloud-onprem-backend",
+    "EXTERNAL:manual failover CLI command (multi-region epic)"
+   ],
+   "labels": [
+    "multi-cloud",
+    "failover",
+    "multi-region"
+   ]
+  },
+  {
+   "slug": "mcloud-pulumi-iac",
+   "title": "Multi-cloud IaC: Pulumi stacks mirroring CDK constructs",
+   "description": "## Goal\nStand up the multi-cloud IaC strategy (§27.5): a Pulumi TypeScript program that mirrors the CDK construct shapes, with provider-specific stacks for GCP and Azure, validated entirely offline.\n\n## Acceptance Criteria\n- `infra/pulumi/` TypeScript project with shared construct-level abstractions mirroring the CDK stacks (§27.5 migration step 1)\n- GCP and Azure provider stacks covering storage, KV, and compute skeletons (§27.5 step 2)\n- All stacks validated with Pulumi mock-based unit tests and `pulumi preview` using mocks — no cloud credentials, no deploys, zero spend (§1 non-goals)\n- `make pulumi-test` target runs the whole validation on a laptop and in CI\n- CDK-to-Pulumi migration notes and a per-stack parity checklist committed alongside the code\n\n## Out of Scope\n- Deployment pipelines per cloud target (§27.5 step 3) — documented as future work only\n- Kubernetes/on-prem manifests (§27.3)\n- Changing the v1 CDK app itself\n\n## Testing\n- Unit (Pulumi mocks) with snapshot assertions of planned resources, analogous to the cdk synth assertion approach (§19.1). No other layers apply.\n\n## Demo\n`make pulumi-test` — mock-backed unit tests plus previews for the gcp and azure stacks succeed with no credentials configured.",
+   "size": "M",
+   "priority": 3,
+   "phase": 9,
+   "deps": [
+    "cdk-skeleton"
+   ],
+   "labels": [
+    "multi-cloud",
+    "iac",
+    "pulumi"
+   ]
+  },
+  {
+   "slug": "mcloud-capability-probe",
+   "title": "mtcctl cloud probe: capability verification for long-tail backends",
+   "description": "## Goal\nShip `mtcctl cloud probe` (§27.4): a capability-verification command that tests whether an arbitrary S3-compatible/KV endpoint meets the CA's hard requirements before anyone attempts a deployment on it. Where capabilities are missing, the target is genuinely unsuitable — the tool must say so rather than paper over gaps.\n\n## Acceptance Criteria\n- `mtcctl cloud probe --object-store <endpoint> [--kv <endpoint>]` runs live checks: Object Lock create/verify/delete-denied round-trip, conditional-write (CAS) conflict behavior, basic latency/clock sanity\n- Emits a suitability report with pass/fail/unsupported per capability and an overall verdict, mapped to the §27.4 guidance (e.g., R2/B2/Wasabi lock support \"requires verification\")\n- Probe against MinIO with Object Lock enabled passes; against an S3-compatible store without lock support it fails with actionable output\n- JSON and human-readable output modes; probe leaves no persistent state (cleans up its test bucket/keys where retention allows)\n\n## Out of Scope\n- Implementing any long-tail backend (R2/B2/Wasabi adapters)\n- HSM probing (§27.4 notes long-tail clouds lack managed HSM; documented, not probed)\n\n## Testing\n- Unit for report/verdict logic; integration against MinIO (pass) and LocalStack S3 variants (§19.1); E2E via CLI invocation in compose (§19.13).\n\n## Demo\n`docker compose --profile onprem up -d && mtcctl cloud probe --object-store http://localhost:9000` prints a suitability report.",
+   "size": "M",
+   "priority": 3,
+   "phase": 9,
+   "deps": [
+    "cloud-abstraction-traits",
+    "aws-backend",
+    "EXTERNAL:mtcctl CLI scaffolding (admin-surface epic)"
+   ],
+   "labels": [
+    "multi-cloud",
+    "cli",
+    "dev-experience"
+   ]
+  },
+  {
+   "slug": "mcloud-test-matrix",
+   "title": "Multi-cloud portability test matrix (scheduled CI)",
+   "description": "## Goal\nBuild the multi-cloud validation matrix (§27.6): run the shared conformance suite plus key integration and chaos scenarios against every backend's emulator in a scheduled CI job, making portability validation systematic rather than bespoke.\n\n## Acceptance Criteria\n- Nightly/manual-dispatch CI workflow runs `cloud-test-suite` against: memory, LocalStack (AWS), fake-gcs-server + Firestore emulator, Azurite + Cosmos stub, MinIO + etcd\n- One E2E issuance smoke scenario (EntryIntake demo flow) runs against the GCP-emulator and onprem compose profiles, proving the CA service code is unchanged across backends (§27.3, §27.5)\n- A chaos-scenario subset (writer failure, lock contention) parameterized over backends (§27.6 \"multi-cloud test matrix (chaos, integration)\", §19.9)\n- Matrix results summarized in a single job artifact; failures link to the per-backend capability-gap docs\n- Workflow is NOT a required PR check — main CI stays fast; matrix is nightly/on-demand only\n\n## Out of Scope\n- New chaos scenario authoring (testing-infrastructure epic owns the harness)\n- Any real cloud account execution (§1 non-goals)\n\n## Testing\n- This ticket IS test infrastructure: integration, chaos, and E2E layers over existing suites (§19.1, §19.9, §19.13); a unit test guards the matrix config parser if one is introduced.\n\n## Demo\n`make matrix-local BACKEND=gcp` runs the matrix slice for one backend locally; CI \"portability-matrix\" workflow dispatch shows the full summary artifact.",
+   "size": "M",
+   "priority": 3,
+   "phase": 9,
+   "deps": [
+    "ci-pipeline",
+    "localstack-dev-env",
+    "mcloud-gcp-object-storage",
+    "mcloud-gcp-kv-hsm",
+    "mcloud-azure-object-storage",
+    "mcloud-azure-kv-hsm",
+    "mcloud-onprem-backend",
+    "EXTERNAL:chaos test harness and scenarios (testing-infrastructure epic)"
+   ],
+   "labels": [
+    "multi-cloud",
+    "ci",
+    "testing"
+   ]
+  },
+  {
+   "slug": "mcloud-portability-docs",
+   "title": "Portability documentation: capability matrix, runbook deltas, long-tail guidance",
+   "description": "## Goal\nWrite the documentation set §27.6 assigns to multi-cloud work (\"Documentation, runbooks, CI updates\"): a living capability matrix, per-backend runbook deltas, and long-tail suitability guidance.\n\n## Acceptance Criteria\n- `docs/portability.md` with the component capability matrix per §27.1, updated to reflect what the implemented backends actually support, including emulator-vs-real-service gap lists per backend\n- Runbook deltas for failover on GCP/Azure/on-prem: conservative Azure wait window (§27.2), on-prem multi-region replication operational notes and Kubernetes compute mapping (§27.3)\n- Long-tail cloud guidance per §27.4, including the `mtcctl cloud probe` workflow and the explicit \"missing capability means unsuitable\" stance\n- §27.6 effort estimates annotated with actuals observed while building the backends\n- Docs pass the CI link/lint check\n\n## Out of Scope\n- Any code changes; v1 AWS runbooks (observability epic owns those)\n\n## Testing\n- Docs link/lint check in CI only; no §19 code-test layers apply.\n\n## Demo\nOpen `docs/portability.md` from the repo docs index; `make docs-check` passes.",
+   "size": "S",
+   "priority": 3,
+   "phase": 9,
+   "deps": [
+    "mcloud-test-matrix",
+    "mcloud-capability-probe",
+    "mcloud-replication-lag"
+   ],
+   "labels": [
+    "multi-cloud",
+    "documentation"
+   ]
+  }
+ ]
+}

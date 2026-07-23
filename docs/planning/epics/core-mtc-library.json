@@ -1,0 +1,199 @@
+{
+  "epic": {
+    "slug": "core-mtc-library",
+    "title": "Core MTC Library",
+    "description": "Clean-room Rust implementation of MTC spec primitives (draft-ietf-plants-merkle-tree-certs -03) in crates/mtc: domain newtypes, Merkle tree math (including tree-level range pruning per section 19.2), tiles, checkpoints, log entries, landmarks, and TLS-presentation wire formats, with ECDSA P-256 (v1) and feature-gated ML-DSA via qux-pqc. Ships with its own verification arsenal per spec sections 19.2-19.6 and 19.12: proptest invariant suite, per-format cargo-fuzz targets, conformance vector scaffolding, differential testing against the bwesterb/mtc Go oracle, and the first Kani harnesses for tree primitives. This epic is the critical-path root: core-mtc-types, tree-primitives, and mtc-serialization block nearly every downstream epic."
+  },
+  "tickets": [
+    {
+      "slug": "core-mtc-types",
+      "title": "Create crates/mtc with domain newtypes and core spec primitive types",
+      "description": "## Goal\nCreate the `crates/mtc` library crate and domain newtypes per spec sections 22.1 and 22.5: `Index`, `TreeSize`, `Epoch`, `HashOutput([u8; 32])`, and phantom-typed string IDs (`Id<T>` with `LogTag`/`BatchTag` giving `LogId`/`BatchId`), plus shared library error types via `thiserror` (section 28).\n\n## Acceptance Criteria\n- `crates/mtc` builds in the workspace with lints per section 22.12; no vendor SDK types anywhere (section 22.8)\n- Derives per section 22.1: integer newtypes are `Copy + Clone + PartialEq + Eq + Hash + Debug`; string IDs are `Clone` but not `Copy`\n- `Id<T>` phantom-type pattern per section 22.5: `LogId` and `BatchId` are distinct compile-time types, identical at runtime\n- trybuild compile-fail test proving an `Epoch` cannot be passed where a `TreeSize` is expected (section 22.1 guarantee)\n- Error enums use `thiserror`; no `unwrap()` in library code\n- Rustdoc on every public item citing the section-2 concept it models\n\n## Out of Scope\n- Wire-format serialization (mtc-serialization)\n- Tree operations (tree-primitives); cloud/storage types (cloud-abstraction epic)\n\n## Testing\n- Unit tests; trybuild compile-fail tests (spec 19.1 unit layer)\n\n## Demo\nAfter merge: `cargo test -p mtc types` passes; `cargo doc -p mtc --open` shows documented newtype module.",
+      "size": "M",
+      "priority": 0,
+      "phase": 1,
+      "labels": ["core-mtc-library", "rust", "types"],
+      "deps": []
+    },
+    {
+      "slug": "tree-primitives",
+      "title": "Merkle tree core: domain-separated hashing, append, root, subtrees",
+      "description": "## Goal\nImplement the Merkle tree math (spec section 2): generic `Hasher` trait with SHA-256 default using static dispatch per section 22.7 (hot path), leaf/interior hash domain separation, empty-tree root constant, in-memory tree construction, append, root computation, and subtree decomposition of ranges [start, end).\n\n## Acceptance Criteria\n- `<H: Hasher>` generic on tree ops per section 22.7 table (tree updater hash function row); SHA-256 via RustCrypto (section 28)\n- Leaf hashes and interior-node hashes use distinct domain-separation prefixes; property test that they never collide (sections 19.2, 19.6)\n- Empty tree root hash is well-defined and constant, locked by a unit test (section 19.6)\n- Two trees built from the same leaf sequence produce identical roots (section 19.2); appending never changes existing node hashes\n- Property test on subtree decomposition of any [start, end): returned subtrees are disjoint, cover exactly [start, end), and number at most 2*log2(tree size)\n- PR split: (1) hashing + domain separation + empty root; (2) tree build/append/root; (3) subtree ranges\n\n## Out of Scope\n- Inclusion/consistency proofs (mtclib-inclusion-proofs); tiles (mtclib-tiles); range pruning (mtclib-tree-pruning)\n- Persistence of tree data (storage-facade epic)\n\n## Testing\n- Unit + property (proptest) per sections 19.1-19.2; Kani harnesses land in mtclib-kani-harnesses\n\n## Demo\nAfter merge: `cargo run -p mtc --example tree_demo` builds a 1000-leaf tree and prints its root hash deterministically.",
+      "size": "M",
+      "priority": 0,
+      "phase": 1,
+      "labels": ["core-mtc-library", "rust", "merkle"],
+      "deps": ["core-mtc-types"]
+    },
+    {
+      "slug": "mtc-serialization",
+      "title": "TLS-presentation serialization framework with bounded parsing",
+      "description": "## Goal\nBuild the wire-format codec framework for spec structures (section 19.3 risk area): `TlsSerialize`/`TlsParse` traits with generic `<W: Write>` writers (section 22.7 hot-path row), and bounded readers that never panic on untrusted bytes.\n\n## Acceptance Criteria\n- Primitives: u8/u16/u24/u32, fixed-size opaque, variable-length vectors with length prefixes per TLS presentation language\n- Parser refuses inputs claiming impossible sizes (no unbounded allocation) and has bounded recursion depth (section 19.3 asserted properties)\n- Parsing is single-pass and time-bounded by input length, not content (section 19.3)\n- Parse of arbitrary bytes returns `Err`, never panics: initial proptest over random byte strings\n- Round-trip helper macro `assert_roundtrip!` reused by every subsequent spec-type ticket (section 19.2: parse(serialize(x)) == x)\n- Codec errors are structured (`thiserror`), reporting offset and expected/found\n\n## Out of Scope\n- Per-type codecs for Checkpoint/entries/tiles (their own tickets)\n- Fuzz targets (mtclib-fuzz-targets); serde/JSON for admin API (admin-surface epic)\n\n## Testing\n- Unit + property per sections 19.1-19.3 layer 1\n\n## Demo\nAfter merge: `cargo test -p mtc serialization` shows round-trip and malformed-input rejection tests passing.",
+      "size": "M",
+      "priority": 0,
+      "phase": 1,
+      "labels": ["core-mtc-library", "rust", "wire-format"],
+      "deps": ["core-mtc-types"]
+    },
+    {
+      "slug": "mtclib-inclusion-proofs",
+      "title": "Inclusion and consistency proof generation and verification",
+      "description": "## Goal\nImplement inclusion proofs (sibling hashes from leaf to subtree root, section 2) and consistency proofs between tree sizes, including generation and verification plus their wire formats. This is the math the section 12.1 relying-party flow and Phase 4 read path build on.\n\n## Acceptance Criteria\n- For any tree size N and any leaf 0 <= i < N, generated inclusion proof verifies (section 19.2)\n- Consistency proofs verify between any two tree sizes N1 <= N2 (section 19.2)\n- Appending preserves all previously-valid inclusion proofs (section 19.2)\n- Verification recomputes leaf-to-root path with domain-separated hashing and compares against expected root\n- Negative tests: wrong leaf index, tampered sibling, truncated proof, proof for size > tree all fail cleanly\n- Proof wire format round-trips via the mtc-serialization framework\n\n## Out of Scope\n- Checkpoint signature verification (mtclib-checkpoint); landmark verification (mtclib-landmarks)\n- Proof-serving Lambda and tile fetching (read-path epic)\n\n## Testing\n- Unit + property per section 19.2; Kani coverage lands in mtclib-kani-harnesses\n\n## Demo\nAfter merge: `cargo run -p mtc --example prove_and_verify` issues a proof for a random leaf and verifies it.",
+      "size": "M",
+      "priority": 1,
+      "phase": 1,
+      "labels": ["core-mtc-library", "rust", "merkle"],
+      "deps": ["tree-primitives", "mtc-serialization"]
+    },
+    {
+      "slug": "mtclib-tree-pruning",
+      "title": "Tree-level range pruning that preserves proofs for unpruned entries",
+      "description": "## Goal\nImplement the tree-math prune operation required by the section 19.2 invariant \"pruning a range and verifying a proof for an unpruned entry still works\": `prune(range)` drops pruned leaf data while retaining the interior hashes needed so unpruned entries remain provable.\n\n## Acceptance Criteria\n- `prune(&mut self, range)` on the in-memory tree; root hash is unchanged by pruning (unit test)\n- Property test (section 19.2): after pruning any range, inclusion proofs for every unpruned leaf still generate and verify\n- Proof generation for a pruned leaf returns a structured `Pruned` error, never panics\n- Pruning is idempotent; overlapping prune calls compose (property test)\n- Edge cases unit-tested: empty range, whole tree, tile-aligned and non-aligned boundaries\n\n## Out of Scope\n- Pruning Step Functions workflow and Object Lock retention (pruning-retention epic, Phase 7)\n- Persistence of pruned state (storage-facade epic)\n\n## Testing\n- Unit + property per sections 19.1-19.2\n\n## Demo\nAfter merge: `cargo run -p mtc --example prune_demo` prunes a range from a 1000-leaf tree and verifies a proof for an unpruned leaf.",
+      "size": "S",
+      "priority": 2,
+      "phase": 1,
+      "labels": ["core-mtc-library", "rust", "merkle"],
+      "deps": ["mtclib-inclusion-proofs"]
+    },
+    {
+      "slug": "mtclib-tiles",
+      "title": "Tile structures per tlog-tiles: build, index, and serialize 256-leaf tiles",
+      "description": "## Goal\nImplement the `Tile` type per the tlog-tiles format (sections 2, 28): fixed 256-leaf chunks of the tree, tile coordinates (level, index, partial width), building tiles from leaves/nodes, extracting hashes, and computing which tile set an inclusion path needs (supports section 12.2 step 3).\n\n## Acceptance Criteria\n- `Tile` type with coordinate newtypes; partial (right-edge) tiles handled correctly\n- Tile bytes serialize/parse via mtc-serialization; round-trip property test; parse of truncated/oversized tile bytes returns Err, never panics\n- Function mapping a (leaf index, tree size) inclusion path to the minimal set of tile coordinates\n- Tile coordinate to canonical path-string formatting per tlog-tiles convention, matching the section 8.1 layout (e.g. tiles/000/000.tile)\n- Rebuilding tree hashes from a full tile set reproduces the root computed directly from leaves (cross-check test)\n\n## Out of Scope\n- Storing/fetching tiles in S3 and the LRU tile cache (storage-facade epic, section 8)\n- Proof-server tile fetch logic (read-path epic)\n\n## Testing\n- Unit + property per section 19.2; fuzz target lands in mtclib-fuzz-targets\n\n## Demo\nAfter merge: `cargo run -p mtc --example tiles_demo` builds a 1000-leaf tree, emits its tiles, and reconstructs the root from tiles alone.",
+      "size": "M",
+      "priority": 1,
+      "phase": 1,
+      "labels": ["core-mtc-library", "rust", "merkle", "wire-format"],
+      "deps": ["tree-primitives", "mtc-serialization"]
+    },
+    {
+      "slug": "mtclib-log-entries",
+      "title": "TBSCertificateLogEntry, claims, and null_entry",
+      "description": "## Goal\nImplement `TBSCertificateLogEntry` per the draft (section 2: per-cert log entry using public key hash, not raw key), its claim/assertion types (DNS names, IP addresses), the spec-defined `null_entry` placeholder that fills gaps from abandoned batches (sections 2, 13.3), and entry-to-leaf hashing.\n\n## Acceptance Criteria\n- `TBSCertificateLogEntry` holds a public-key hash newtype; API makes storing a raw key unrepresentable\n- Typestate builder for entry construction per section 22.2 pattern; incomplete build is a compile error (trybuild test)\n- `null_entry` is a well-defined constant whose serialization matches the draft; unit test locks its bytes\n- TLS-presentation round-trip via mtc-serialization for entries and claims (section 19.2); malformed bytes return Err, never panic\n- Entry-to-leaf-hash uses the domain-separated leaf hashing from tree-primitives\n\n## Out of Scope\n- Batch assembly and issuance pipeline (ca-service epic); EntryIntake adapter seam (ca-service)\n- X.509/ACME mapping of claims (ca-service epic)\n\n## Testing\n- Unit + property + trybuild per sections 19.1-19.2; fuzz target lands in mtclib-fuzz-targets\n\n## Demo\nAfter merge: `cargo test -p mtc log_entry` passes; example prints the hex leaf hash of a sample entry and of null_entry.",
+      "size": "M",
+      "priority": 1,
+      "phase": 1,
+      "labels": ["core-mtc-library", "rust", "types", "wire-format"],
+      "deps": ["mtc-serialization", "tree-primitives"]
+    },
+    {
+      "slug": "mtclib-signing",
+      "title": "Signature scheme abstraction plus ECDSA P-256 (v1 algorithm)",
+      "description": "## Goal\nDefine the algorithm-agnostic signing abstraction (`SignatureScheme` trait, algorithm identifiers, `Signature`/`VerifyingKey` newtypes) and implement ECDSA P-256 via RustCrypto as the v1 algorithm (section 24 Phase 1, section 28).\n\n## Acceptance Criteria\n- Traits take and return domain types only, no vendor types (section 22.8); designed so the cloud `Hsm` trait can back a signer later without changing callers\n- Algorithm identifier registry matching the draft's codepoints; unknown IDs parse to a structured error\n- PR split: (1) traits + algorithm IDs + newtypes; (2) `p256` implementation with tests\n- ECDSA P-256 sign/verify round-trip tests; verify rejects tampered message, tampered signature, and wrong key\n- Known-answer tests from published P-256 test vectors\n- `#[must_use]` on verification results per section 22.10\n\n## Out of Scope\n- ML-DSA (mtclib-ml-dsa-quxpqc); HSM-backed signing (cloud-abstraction epic, checkpoint-signer)\n- Checkpoint signing flow (mtclib-checkpoint)\n\n## Testing\n- Unit + known-answer vectors per section 19.1; crypto invariants per section 19.6\n\n## Demo\nAfter merge: `cargo test -p mtc signing` passes including KATs; example signs and verifies a sample payload with a fresh P-256 key.",
+      "size": "M",
+      "priority": 1,
+      "phase": 1,
+      "labels": ["core-mtc-library", "rust", "crypto"],
+      "deps": ["core-mtc-types"]
+    },
+    {
+      "slug": "mtclib-ml-dsa-quxpqc",
+      "title": "ML-DSA via qux-pqc behind a feature flag",
+      "description": "## Goal\nIntegrate ML-DSA (FIPS 204) via `qux-pqc` as a `SignatureScheme` implementation, gated behind an `ml-dsa` cargo feature until production-ready (section 24 Phase 1, section 28). This is what makes the post-quantum story real (section 2).\n\n## Acceptance Criteria\n- `ml-dsa` feature flag; default build excludes qux-pqc entirely; `cargo build -p mtc` and `cargo build -p mtc --features ml-dsa` both succeed\n- ML-DSA sign/verify round-trip tests; verify rejects tampered inputs\n- Known-answer tests against FIPS 204 test vectors\n- ML-DSA algorithm identifier wired into the registry from mtclib-signing; feature-off builds still parse the ID and return an unsupported-algorithm error rather than panicking\n- Signature size assertions documenting the ~40x-vs-ECDSA size premium noted in section 2\n\n## Out of Scope\n- Making ML-DSA the default checkpoint algorithm (v1 is ECDSA per section 24)\n- HSM-backed ML-DSA (cloud-abstraction epic)\n\n## Testing\n- Unit + known-answer vectors per section 19.1; feature-matrix build check\n\n## Demo\nAfter merge: `cargo test -p mtc --features ml-dsa ml_dsa` passes; default `cargo test -p mtc` is unchanged.",
+      "size": "S",
+      "priority": 2,
+      "phase": 1,
+      "labels": ["core-mtc-library", "rust", "crypto", "post-quantum"],
+      "deps": ["mtclib-signing"]
+    },
+    {
+      "slug": "mtclib-checkpoint",
+      "title": "Checkpoint type with typestate builder, serialization, sign and verify",
+      "description": "## Goal\nImplement `Checkpoint` — the signed (tree size, root hash) commitment (section 2) — with the section 22.2 typestate builder, TLS-presentation serialization, and sign/verify over the mtclib-signing abstraction.\n\n## Acceptance Criteria\n- `CheckpointBuilder` typestate per section 22.2: `.build()` unreachable until log_id, root_hash, tree_size, signed_at are set; trybuild compile-fail test proves it\n- Serialization round-trip proptest exactly as sketched in section 19.3 Layer 1 (`checkpoint_roundtrip`)\n- Parse of arbitrary bytes returns Err, never panics; size fields bounded (section 19.3)\n- Sign via any `SignatureScheme`; verify rejects wrong signature, wrong key, mutated tree_size or root_hash\n- Checkpoint for the empty tree is well-defined and constant-rooted (section 19.6)\n- PR split: (1) type + builder + serialization; (2) sign/verify + negative tests\n\n## Out of Scope\n- HSM-backed checkpoint signer service (ca-service epic, checkpoint-signer anchor)\n- Checkpoint storage/publication (storage-facade epic)\n\n## Testing\n- Unit + property + trybuild per sections 19.1-19.3; crypto invariants per section 19.6\n\n## Demo\nAfter merge: `cargo run -p mtc --example checkpoint_demo` builds, signs, serializes, re-parses, and verifies a checkpoint.",
+      "size": "M",
+      "priority": 1,
+      "phase": 1,
+      "labels": ["core-mtc-library", "rust", "types", "wire-format"],
+      "deps": ["mtc-serialization", "mtclib-signing"]
+    },
+    {
+      "slug": "mtclib-mtc-proof",
+      "title": "MTCProof: certificate assembly and end-to-end verification path",
+      "description": "## Goal\nImplement `MTCProof` — the certificate as entry plus inclusion proof to a signed checkpoint (section 2) — and the full relying-party verification path of section 12.1: recompute leaf hash, walk the inclusion path, compare roots, verify checkpoint signature.\n\n## Acceptance Criteria\n- `MTCProof` composes TBSCertificateLogEntry + inclusion path + checkpoint reference; wire format round-trips via mtc-serialization\n- `verify()` implements the section 12.1 flow and returns structured errors distinguishing bad-entry, bad-path, root-mismatch, and bad-signature\n- Property test: proofs assembled for any leaf of any tree size verify against that tree's signed checkpoint (section 19.2)\n- Negative tests: swapped entries, path from a different leaf, checkpoint from a different tree all fail\n- Serialized proof size test documenting the ~736-byte order of magnitude claim from section 2\n\n## Out of Scope\n- Signatureless/landmark verification (mtclib-landmarks)\n- Proof-server Lambda, CloudFront, and the standalone verification-library packaging (read-path epic)\n\n## Testing\n- Unit + property per section 19.2; differential coverage arrives via mtclib-differential-go-oracle\n\n## Demo\nAfter merge: `cargo run -p mtc --example issue_and_verify` builds a tree, signs a checkpoint, assembles an MTCProof for a leaf, and verifies it end-to-end.",
+      "size": "M",
+      "priority": 1,
+      "phase": 1,
+      "labels": ["core-mtc-library", "rust", "merkle", "wire-format"],
+      "deps": ["mtclib-checkpoint", "mtclib-inclusion-proofs", "mtclib-log-entries"]
+    },
+    {
+      "slug": "mtclib-landmarks",
+      "title": "Landmark selection and signatureless verification",
+      "description": "## Goal\nImplement landmarks — predistributed subtree hashes enabling signatureless verification (section 2, goal in section 1) — including landmark selection for a given tree size per the draft and the section 12.1 step 6' variant: verify a computed subtree root against a landmark hash instead of a checkpoint signature.\n\n## Acceptance Criteria\n- Landmark selection function: for a tree size, produce the spec-defined landmark subtree set; deterministic and unit-tested against hand-computed small cases\n- `Landmark` wire format round-trips via mtc-serialization\n- Signatureless verify path on `MTCProof`: proof to subtree root compared against a supplied landmark, no signature check (section 12.1 step 6')\n- Property test: any entry under a landmark verifies signaturelessly; entries outside it fail with a structured landmark-miss error enabling fallback to full verification\n- PR split: (1) selection + serialization; (2) signatureless verify path\n\n## Out of Scope\n- Landmark distribution cadence and publication (open question OQ-4; read-path/observability epics)\n\n## Testing\n- Unit + property per section 19.2\n\n## Demo\nAfter merge: `cargo run -p mtc --example signatureless_demo` verifies a proof against a landmark with signature verification disabled.",
+      "size": "M",
+      "priority": 2,
+      "phase": 1,
+      "labels": ["core-mtc-library", "rust", "merkle"],
+      "deps": ["mtclib-mtc-proof"]
+    },
+    {
+      "slug": "mtclib-trust-anchor-id",
+      "title": "TrustAnchorID type per draft-ietf-tls-trust-anchor-ids",
+      "description": "## Goal\nImplement the Trust Anchor ID — the stable CA identifier (section 2) — per draft-ietf-tls-trust-anchor-ids (section 28): binary encoding, human-readable text form, parsing, and equality/ordering semantics.\n\n## Acceptance Criteria\n- `TrustAnchorId` newtype with binary serialization via mtc-serialization and dotted text formatting/parsing\n- Round-trip property tests for both binary and text forms (section 19.2)\n- Parsing arbitrary bytes/strings returns Err, never panics; length bounded (section 19.3 properties)\n- Ordering and equality well-defined and tested (needed for stable log identity)\n- Draft revision pinned and cited in rustdoc (section 28 spec-tracking workflow: track OQ-2 instability)\n\n## Out of Scope\n- TLS handshake negotiation of trust anchors (out of project scope)\n- Embedding into ACME/issuance flows (ca-service epic)\n\n## Testing\n- Unit + property per section 19.2; fuzz target lands in mtclib-fuzz-targets\n\n## Demo\nAfter merge: `cargo test -p mtc trust_anchor` passes; example parses and reprints a sample Trust Anchor ID in both forms.",
+      "size": "S",
+      "priority": 2,
+      "phase": 1,
+      "labels": ["core-mtc-library", "rust", "types", "wire-format"],
+      "deps": ["mtc-serialization"]
+    },
+    {
+      "slug": "mtclib-proptest-suite",
+      "title": "Consolidated proptest invariant suite and Arbitrary impls for all spec types",
+      "description": "## Goal\nConsolidate the section 19.2 Merkle/serialization invariant list and the library-level section 19.6 crypto invariants into a named property-test suite, with proptest `Arbitrary` implementations for every spec type and an extended-iteration profile (10,000+ cases, section 19.3 Layer 1).\n\n## Acceptance Criteria\n- One named property test per section 19.2 bullet: inclusion proofs for all (N, i); consistency proofs; append preserves proofs; identical leaves give identical roots; pruning a range (via mtclib-tree-pruning) keeps unpruned proofs verifying; round-trip for every spec type; leaf/interior hash domain separation\n- Section 19.6 library invariants: same tree size implies same root; empty-tree root constant; domain-separation prefixes consistent\n- `Arbitrary` impls for Checkpoint, TBSCertificateLogEntry, Tile, MTCProof, TrustAnchorId, reusable by fuzz targets\n- `PROPTEST_CASES` env-driven extended profile; `make proptest-extended` runs 10k+ cases locally\n- Failure seeds persisted and replayable; regression seeds checked in\n\n## Out of Scope\n- CI job wiring for extended runs (testing-infra epic)\n- HSM-related 19.6 invariants (cloud-abstraction epic)\n\n## Testing\n- Property layer per sections 19.2-19.3\n\n## Demo\nAfter merge: `make proptest-extended` completes with all invariants green; `cargo test -p mtc properties` runs the fast profile.",
+      "size": "M",
+      "priority": 1,
+      "phase": 1,
+      "labels": ["core-mtc-library", "rust", "testing", "proptest"],
+      "deps": ["mtclib-mtc-proof", "mtclib-tiles", "mtclib-trust-anchor-id", "mtclib-tree-pruning"]
+    },
+    {
+      "slug": "mtclib-fuzz-targets",
+      "title": "cargo-fuzz targets for every externally-parseable wire format",
+      "description": "## Goal\nCreate the per-format fuzz targets required by section 19.3: unstructured (Layer 2) targets for each externally-parseable type owned by this epic, a structured (Layer 3) `arbitrary`-driven target for post-parse proof verification, and seed corpora under `fuzz/corpus/`.\n\n## Acceptance Criteria\n- `cargo fuzz` targets: `parse_checkpoint`, `parse_log_entry`, `parse_tile`, `parse_mtc_proof`, `parse_trust_anchor_id` — each asserts no panic, no UB, no excessive allocation (section 19.3 Layer 2 pattern)\n- Structured target: `verify_proof` fed by an `arbitrary`-derived semi-valid proof input reusing the mtclib-proptest-suite generators; verification must not panic (section 19.3 Layer 3)\n- Seed corpora checked in at `fuzz/corpus/<target>/`, seeded from serialized valid examples and proptest regression seeds (conformance vectors folded in as they land); corpus-management flow from section 19.3 documented (minimized crashers become permanent unit-test regressions)\n- `make fuzz TARGET=<name> DURATION=60` runs any target locally; all targets survive a 60s local smoke run\n- PR split: (1) fuzz crate + parse targets; (2) structured verify target + corpora + make target\n\n## Out of Scope\n- CI/nightly fuzzing orchestration (testing-infra epic, per boundary rules)\n- `RevocationList` target (revocation epic) and ACME request body target (ca-service epic)\n\n## Testing\n- Fuzz layer per section 19.3; regression fixtures feed the unit layer\n\n## Demo\nAfter merge: `make fuzz TARGET=parse_checkpoint DURATION=60` runs clean on a laptop.",
+      "size": "M",
+      "priority": 1,
+      "phase": 1,
+      "labels": ["core-mtc-library", "rust", "testing", "fuzzing"],
+      "deps": ["mtclib-proptest-suite"]
+    },
+    {
+      "slug": "mtclib-conformance-suite",
+      "title": "Spec conformance suite scaffolding with clean-room test vectors",
+      "description": "## Goal\nBuild the section 19.4 conformance scaffolding: a versioned test-vector file format, a harness that auto-discovers and runs vectors, and an initial set of clean-room vectors derived from the draft text (section 6 clean-room constraints), pinned to draft revision -03 (section 28 spec-tracking workflow).\n\n## Acceptance Criteria\n- Vector format (JSON with hex fields) carrying: draft revision, spec section reference, input bytes, expected output/root/error\n- Harness discovers vectors under `crates/mtc/tests/vectors/`; adding a vector file requires no Rust changes\n- Initial vectors: empty-tree root, small-tree roots (1..=8 leaves), null_entry bytes, entry round-trip, checkpoint round-trip, inclusion proof verify (positive and negative), MTCProof end-to-end verify\n- Failing vector output names the vector file and spec section for fast triage\n- Vectors authored from spec text, not derived from mtc-bridge output (AGPL boundary, section 6)\n- PR split: (1) format + harness; (2) initial vector corpus\n\n## Out of Scope\n- Cross-language differential oracle (mtclib-differential-go-oracle)\n- CI gate wiring (testing-infra epic); daily draft-diff job (section 28, foundation/testing-infra)\n\n## Testing\n- Conformance layer per section 19.4; vectors double as fuzz corpus seeds\n\n## Demo\nAfter merge: `make conformance` runs the vector suite green and prints a per-section coverage summary.",
+      "size": "M",
+      "priority": 1,
+      "phase": 1,
+      "labels": ["core-mtc-library", "rust", "testing", "conformance"],
+      "deps": ["mtclib-mtc-proof"]
+    },
+    {
+      "slug": "mtclib-differential-go-oracle",
+      "title": "Differential testing harness against the bwesterb/mtc Go binary",
+      "description": "## Goal\nImplement section 19.3 Layer 4 and section 19.5: a small Go oracle binary wrapping `bwesterb/mtc` (BSD-3-Clause, section 28) with parse/verify subcommands, and a Rust harness that runs both implementations on the same inputs and asserts agreement.\n\n## Acceptance Criteria\n- Go wrapper under `tools/mtc-oracle/` pinned to a specific bwesterb/mtc commit via go.mod; built by `make oracle`\n- Rust harness implements the section 19.3 differential_parse pattern: both-accept requires structural equality; both-reject passes; accept/reject mismatch fails with input hex dumped for investigation\n- Differential verify (section 19.5 Path B): proofs our library produces are verified by the Go oracle, and vice versa where formats allow\n- Corpus: conformance vectors, plus any fuzz corpora present under `fuzz/corpus/`, replayed through the differential harness\n- Mismatch findings get minimized and checked in as regression vectors\n- PR split: (1) Go oracle binary; (2) Rust differential harness + corpus replay\n\n## Out of Scope\n- Nightly CI job scheduling (testing-infra epic, section 19.3 Layer 4 notes cross-language tooling cost)\n- Copying Go code into our implementation (clean-room rule, section 6)\n\n## Testing\n- Differential layer per sections 19.3/19.5; runs locally on a laptop with the Go toolchain\n\n## Demo\nAfter merge: `make differential` builds the oracle and replays the corpus through both parsers, reporting agreement stats.",
+      "size": "M",
+      "priority": 2,
+      "phase": 1,
+      "labels": ["core-mtc-library", "testing", "differential", "go"],
+      "deps": ["mtclib-conformance-suite"]
+    },
+    {
+      "slug": "mtclib-kani-harnesses",
+      "title": "First Kani harnesses for critical tree primitives",
+      "description": "## Goal\nAdd the first Kani model-checking harnesses for tree primitives per sections 19.12 and 24 Phase 1: absence of panics, integer overflow, and assertion violations in hashing, append, and the inclusion-proof generate/verify pair.\n\n## Acceptance Criteria\n- Harnesses under `crates/mtc/proofs/` (convention per section 23.7 journal example): (1) leaf/interior hashing and append never panic or overflow for bounded inputs; (2) for any leaf in any bounded-size tree, generate-then-verify inclusion proof succeeds (section 19.12: proof verifies for any leaf in any tree size); (3) domain-separated leaf and interior encodings are disjoint for bounded inputs\n- Each harness documents its unwind/size bounds and why they are representative\n- `make kani-mtc` runs all harnesses locally and passes\n- Harness runtime kept laptop-feasible (minutes, not hours) via bounds\n- PR split: (1) no-panic/overflow harnesses; (2) proof round-trip harness + docs\n\n## Out of Scope\n- Lease/epoch Kani verification (multi-region epic, section 19.12)\n- CI integration of Kani runs (testing-infra epic)\n\n## Testing\n- Kani layer per section 19.12; complements property tests, does not replace them\n\n## Demo\nAfter merge: `make kani-mtc` completes with all harnesses verified; README snippet shows sample output.",
+      "size": "M",
+      "priority": 1,
+      "phase": 1,
+      "labels": ["core-mtc-library", "rust", "formal-verification", "kani"],
+      "deps": ["mtclib-inclusion-proofs"]
+    },
+    {
+      "slug": "mtclib-api-docs",
+      "title": "Rustdoc, spec cross-reference map, and clean-room provenance docs for crates/mtc",
+      "description": "## Goal\nDocument the mtc crate as a first-class deliverable (section 25.7 dev-experience tickets): rustdoc with doctest examples on every public item, a README mapping each type to its draft section, and a clean-room provenance statement per section 6.\n\n## Acceptance Criteria\n- `#![warn(missing_docs)]` raised to deny in crate lints; `cargo doc -p mtc` completes with zero warnings\n- Doctests for the three core flows: build tree and compute root; assemble and verify an MTCProof; sign and verify a checkpoint — all passing under `cargo test --doc -p mtc`\n- README table mapping every public type to its section-2 concept and draft-ietf-plants-merkle-tree-certs -03 section, with pinned revision stated (section 28 spec-tracking workflow)\n- Provenance note: bwesterb/mtc read for design patterns only, mtc-bridge AGPL never read into code (section 6 licensing constraints)\n- Feature-flag matrix (ml-dsa) documented\n\n## Out of Scope\n- Runbooks and operator docs (observability epic); AGENTS.md/skills seeding (agent-harnessing epic)\n\n## Testing\n- Doctests (unit layer, section 19.1); doc build gate\n\n## Demo\nAfter merge: `cargo doc -p mtc --open` shows the documented crate; `cargo test --doc -p mtc` passes.",
+      "size": "S",
+      "priority": 2,
+      "phase": 1,
+      "labels": ["core-mtc-library", "rust", "docs"],
+      "deps": ["mtclib-landmarks", "mtclib-tiles", "mtclib-trust-anchor-id", "mtclib-ml-dsa-quxpqc"]
+    }
+  ]
+}

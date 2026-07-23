@@ -1,0 +1,189 @@
+{
+  "epic": {
+    "slug": "storage-facade",
+    "title": "Storage Facade",
+    "description": "Build the crates/storage facade the CA service consumes: it maps the S3 object layout (§8.1), S3 write-once/retention invariants, and the DynamoDB single-table access patterns (§8.2) onto the cloud-abstraction traits, with every mutating write epoch-conditioned per §8.3. It also owns the in-memory storage-adjacent state from §8.4: LRU tile cache, checkpoint cache, counter view, and CA state hydration on startup. It provides raw KV/lease-item access only — the lease/epoch protocol lives in the multi-region epic, and trait definitions live in cloud-abstraction. The entry intake queue (§8.4) is excluded: it is drained by the batch builder and belongs to ca-service."
+  },
+  "tickets": [
+    {
+      "slug": "storage-facade-core",
+      "title": "Storage facade crate: Storage trait, error taxonomy, S3DdbStorage wiring",
+      "description": "## Goal\nCreate `crates/storage`: the `Storage` facade trait with the full method surface used by the CA service pseudocode (§11.4, §13.3: `read_lease`, `allocate_indices`, `persist_batch_state`, `write_entries`, `write_tiles`, `commit_checkpoint`, `read_latest_checkpoint`, `query_pending_batches`, `mark_batch_abandoned`), a `StorageError` taxonomy, and the `S3DdbStorage` struct wired from `Backend` trait objects (§9.4). This is the seam sub-tickets fill in (§23.6 codemap: crate `storage`).\n\n## Acceptance Criteria\n- `crates/storage` in workspace; depends only on `cloud-types` and core MTC types, never a provider SDK (§9.3–9.4)\n- `trait Storage` declared with the full §11.4/§13.3 method surface, doc comments citing spec sections\n- `StorageError` enum with `LostLease`, `AlreadyExists`, `NotFound`, `InvalidState`, `Unimplemented`, `Backend(..)` variants via `thiserror` (§22)\n- `S3DdbStorage::new(Arc<Backend>, StorageConfig)`; config carries bucket, table, `log#{logId}` PK, retention policy; unimplemented methods return the typed `Unimplemented` error (replaced by sub-tickets), never panic\n- Constructor + error-mapping tests run over the pure-memory backend with zero external deps (§9.6)\n\n## Out of Scope\n- Real method implementations (per-pattern sub-tickets)\n- Lease/epoch protocol logic (multi-region epic); cloud trait definitions (cloud-abstraction epic)\n\n## Testing\nUnit (memory backend, §19.1); no integration needed yet.\n\n## Demo\n`cargo test -p storage` green from a clean clone with no Docker running.",
+      "size": "M",
+      "priority": 0,
+      "phase": 2,
+      "deps": ["cloud-abstraction-traits", "core-mtc-types", "memory-backend"],
+      "labels": ["storage-facade", "phase-2", "critical-path"]
+    },
+    {
+      "slug": "stor-s3-key-layout",
+      "title": "S3 key layout module: fixed-width zero-padded object naming",
+      "description": "## Goal\nImplement the §8.1 object key scheme as a pure module: `checkpoints/{tree_size}.signed`, `tiles/{level}/{...}.tile`, `entries/{...}.entry`, `revocations/{tree_size}.signed`, all fixed-width zero-padded so lexicographic order equals numeric order.\n\n## Acceptance Criteria\n- Typed constructors: checkpoint key from tree size, tile key from (level, tile index), entry key from entry index, revocation key from tree size — taking domain newtypes, not raw u64 (§22)\n- Parsers invert every constructor; `parse(render(k)) == k`\n- Rendered keys match §8.1 examples byte-for-byte (e.g. tree size 256 → `checkpoints/0000000000000256.signed`; entry 0 → `entries/000/000/000000.entry`)\n- Property test: for random index pairs, numeric ordering == lexicographic ordering of rendered keys (§8.1 invariant)\n- No I/O in this module; pure functions only\n\n## Out of Scope\n- Actually writing objects (stor-write-once-objects)\n- CloudFront/read-path URL mapping (read-path epic)\n\n## Testing\nUnit; property (`proptest` round-trip + ordering, §19.2).\n\n## Demo\n`cargo test -p storage key_layout` and a doctest table showing example index → key renderings.",
+      "size": "S",
+      "priority": 0,
+      "phase": 2,
+      "deps": ["storage-facade-core"],
+      "labels": ["storage-facade", "phase-2", "critical-path"]
+    },
+    {
+      "slug": "stor-ddb-schema",
+      "title": "DDB item schema: typed items and epoch condition builder",
+      "description": "## Goal\nImplement the §8.2 single-table schema as typed Rust structs with conversions to/from `cloud-types` KV items: `counter`, `primary-region-lease`, `latest-checkpoint`, `latest-revocation`, `batch#{batchId}`, `audit#{tree_size}`, all under PK `log#{logId}`. Include the shared epoch `ConditionExpression` builder used by every mutating write (§8.3).\n\n## Acceptance Criteria\n- One struct per SK pattern with exactly the §8.2 attributes (batch items include `source_type`/`source_id` for the adapter pattern, §10)\n- `to_item`/`from_item` round-trip for every struct; unknown attributes tolerated on read (forward compat)\n- SK strings match §8.2 patterns exactly; PK built from `LogId` newtype\n- `epoch_condition(Epoch)` helper produces a `Condition` reusable by counter, batch, checkpoint, and revocation writers\n- Malformed items produce typed decode errors, never panics\n\n## Out of Scope\n- Any network calls; this is pure item (de)serialization\n- Lease renewal/takeover semantics (multi-region epic)\n\n## Testing\nUnit; property (`proptest` round-trip per item type, §19.2).\n\n## Demo\n`cargo test -p storage ddb_schema`; doctest showing a batch item rendered to attribute map.",
+      "size": "S",
+      "priority": 0,
+      "phase": 2,
+      "deps": ["storage-facade-core"],
+      "labels": ["storage-facade", "phase-2", "critical-path"]
+    },
+    {
+      "slug": "stor-write-once-objects",
+      "title": "Write-once object writer with Object Lock retention",
+      "description": "## Goal\nImplement the immutable-object write path enforcing the §8.1 S3 invariants at the facade layer: put-if-absent, bytes never change after write, retention applied via `ObjectLock::put_with_retention` (§9.1) using the configured retention policy (§15.3).\n\n## Acceptance Criteria\n- `put_immutable(key, bytes)` writes with `retain_until` computed from `StorageConfig` retention policy\n- Second write with different bytes → `StorageError::AlreadyExists`; second write with identical bytes → `Ok` (idempotent, safe for crash-retry per §11.3 failure modes)\n- All object categories (checkpoints, tiles, entries, revocations) route through this path — no direct `ObjectStore::put` for log objects elsewhere in the crate\n- Read counterpart `get_object(key)` with typed NotFound\n\n## Out of Scope\n- Lifecycle/pruning deletion (pruning epic)\n- Retention extension workflows (pruning epic)\n\n## Testing\nUnit + property over memory backend (arbitrary write sequences never mutate stored bytes); LocalStack S3 Object Lock coverage lands via stor-conformance-suite (§19.1).\n\n## Demo\n`cargo test -p storage write_once`; test log shows an overwrite attempt rejected.",
+      "size": "S",
+      "priority": 1,
+      "phase": 2,
+      "deps": ["storage-facade-core", "stor-s3-key-layout"],
+      "labels": ["storage-facade", "phase-2"]
+    },
+    {
+      "slug": "stor-counter-allocate",
+      "title": "Counter UpdateItem with epoch check: allocate_indices + init + counter view",
+      "description": "## Goal\nImplement atomic index allocation per the §25.4 exemplar ticket: `Storage::allocate_indices(n, epoch)` via `ReplicatedKv::atomic_update` on the `counter` item with epoch `ConditionExpression` (§8.2, §8.3), plus idempotent counter initialization and the optimistic local counter view (§8.4: authoritative read happens during UpdateItem, never from the local view).\n\n## Acceptance Criteria\n- `allocate_indices(&self, n, epoch) -> Result<(Index, Index), StorageError>` returns a contiguous, exclusive-end range\n- Conditional-check failure maps to `StorageError::LostLease` (§25.4)\n- `init_counter()` creates the item if absent; safe to call repeatedly\n- Local counter view is advisory only; a stale view never causes overlapping ranges\n- Property test: many concurrent allocations produce non-overlapping ranges\n- Kani harness `verify_no_overlapping_allocations` in `crates/storage/proofs/` (§23.7)\n- Integration test against LocalStack DDB behind `--features integration` (§19.1)\n\n## Out of Scope\n- Lease renewer and lease-check policy (multi-region epic)\n- Batch persistence (stor-batch-state)\n\n## Testing\nUnit, property, integration (LocalStack DDB), Kani.\n\n## Demo\n`cargo test -p storage counter`; `cargo kani -p storage` proves the no-overlap harness.",
+      "size": "M",
+      "priority": 1,
+      "phase": 2,
+      "deps": ["stor-ddb-schema", "aws-backend", "localstack-dev-env"],
+      "labels": ["storage-facade", "phase-2", "kani"]
+    },
+    {
+      "slug": "stor-lease-raw-access",
+      "title": "Raw lease item access: typed read and conditional write helpers",
+      "description": "## Goal\nProvide the raw `primary-region-lease` item access (§8.2) the multi-region protocol will drive: typed `read_lease()` (used by §11.4 step 1) and conditional-write helpers (CAS on epoch/holder/expires_at) — mechanics only, no protocol.\n\n## Acceptance Criteria\n- `read_lease()` returns typed `Lease { region, expires_at, epoch, holder_id }` per §8.2\n- `write_lease_conditional(lease, conditions)` surfaces condition failure as a typed error (not a panic, not a generic backend error)\n- Condition helpers cover: expected epoch, expected holder, expiry-before-timestamp — the building blocks §8.3 semantics require\n- Missing lease item → typed `NotFound` so bootstrap can detect first-run\n\n## Out of Scope\n- Renewal cadence (20s/60s TTL), takeover eligibility, epoch increment on takeover — all §8.3 protocol logic belongs to the multi-region epic (`claim_lease` semantics land there)\n- Standby monitoring behavior\n\n## Testing\nUnit + property over memory backend; LocalStack coverage via stor-conformance-suite (§19.1).\n\n## Demo\n`cargo test -p storage lease_access`; doctest reading and conditionally updating a lease against the memory backend.",
+      "size": "S",
+      "priority": 1,
+      "phase": 2,
+      "deps": ["stor-ddb-schema"],
+      "labels": ["storage-facade", "phase-2"]
+    },
+    {
+      "slug": "stor-batch-state",
+      "title": "Batch item lifecycle: persist, transition, query pending, abandon",
+      "description": "## Goal\nImplement `batch#{batchId}` access patterns (§8.2): `persist_batch_state` (§11.4 step 4), epoch-conditioned status transitions, `query_pending_batches` and `mark_batch_abandoned` (§13.3 promotion step 2).\n\n## Acceptance Criteria\n- `persist_batch_state` writes Pending with `start_index`, `end_index`, `leaf_count`, `epoch`, `created_at`, `source_type`, `source_id` (§8.2, §10)\n- Status transitions form a validated state machine: Pending → Committed | Abandoned; illegal transitions (e.g. Committed → Abandoned) → `InvalidState`\n- Every mutating write includes the epoch condition (§8.3); mismatch → `LostLease`\n- `query_pending_batches` prefix-queries `batch#` and returns only Pending items; `committed_at` set on commit\n- `mark_batch_abandoned` idempotent (promotion is idempotent, §13.3)\n\n## Out of Scope\n- The commit transaction itself (stor-checkpoint-commit owns the linearization point)\n- Batch building logic (ca-service epic)\n\n## Testing\nUnit; property (`proptest` over random transition sequences — invalid sequences always rejected); LocalStack via stor-conformance-suite (§19.1).\n\n## Demo\n`cargo test -p storage batch_state`; test output shows a Pending batch abandoned then rejected for commit.",
+      "size": "M",
+      "priority": 1,
+      "phase": 2,
+      "deps": ["stor-ddb-schema"],
+      "labels": ["storage-facade", "phase-2"]
+    },
+    {
+      "slug": "stor-entry-writer",
+      "title": "write_entries: parallel write-once entry objects",
+      "description": "## Goal\nImplement `write_entries(start, &batch)` (§11.4 step 5): serialize each entry (mtc-serialization) and write it write-once at its §8.1 entry key, in parallel with bounded concurrency.\n\n## Acceptance Criteria\n- Entry at index `start + i` lands at exactly the §8.1 key for that index\n- Parallel writes with a configurable concurrency bound; partial failure surfaces an aggregate error naming failed indices\n- Retry after crash is idempotent: identical bytes → success, differing bytes → `AlreadyExists` (§8.1 invariant, §11.3)\n- `read_entry(index)` counterpart returns the exact bytes written\n\n## Out of Scope\n- Entry validation/construction (ca-service batch builder)\n- Tile derivation from entries (stor-tile-writer / tree-updater)\n\n## Testing\nUnit; property (for random batches, every entry readable at its index and byte-identical, §19.2); LocalStack via stor-conformance-suite (§19.1).\n\n## Demo\n`cargo test -p storage entry_writer`; example writes a 100-entry batch to the memory backend and lists the resulting keys in §8.1 shape.",
+      "size": "S",
+      "priority": 1,
+      "phase": 2,
+      "deps": ["stor-write-once-objects", "mtc-serialization"],
+      "labels": ["storage-facade", "phase-2"]
+    },
+    {
+      "slug": "stor-tile-writer",
+      "title": "write_tiles: tile persistence at the §8.1 tile layout",
+      "description": "## Goal\nImplement `write_tiles(&new_tiles)` (§11.4 step 6): persist tiles produced by tree-primitives at their `tiles/{level}/{...}.tile` keys (§8.1), write-once, plus the `read_tile(level, index)` fetch counterpart used by the cache and hydration.\n\n## Acceptance Criteria\n- (level, tile index) → key mapping via stor-s3-key-layout; level 0 is leaves (§8.1)\n- Tiles serialized via the core library's tile wire format (tree-primitives)\n- Re-writing an identical tile succeeds (idempotent retry); differing bytes at the same key → `AlreadyExists` (§8.1 invariant)\n- `read_tile` returns typed tile or `NotFound`; round-trip write→read is byte-identical\n- Multi-tile batches write in parallel with bounded concurrency\n\n## Out of Scope\n- Tree update logic computing which tiles changed (ca-service tree-updater)\n- Caching (stor-tile-cache)\n\n## Testing\nUnit; property (random tile sets round-trip; second divergent write always rejected, §19.2); LocalStack via stor-conformance-suite (§19.1).\n\n## Demo\n`cargo test -p storage tile_writer`; example builds a small tree, writes its tiles, reads one back and prints its key.",
+      "size": "S",
+      "priority": 1,
+      "phase": 2,
+      "deps": ["stor-write-once-objects", "tree-primitives"],
+      "labels": ["storage-facade", "phase-2"]
+    },
+    {
+      "slug": "stor-checkpoint-commit",
+      "title": "commit_checkpoint: transactional linearization point + read_latest_checkpoint",
+      "description": "## Goal\nImplement §11.4 step 8, the linearization point: write the signed checkpoint object (write-once, retention), then a `ReplicatedKv::transact` atomically updating `latest-checkpoint` and flipping the batch to Committed, both epoch-conditioned (§8.2, §8.3). Also implement `read_latest_checkpoint` (§13.3 step 1).\n\n## Acceptance Criteria\n- Checkpoint object written to `checkpoints/{tree_size}.signed` before the KV transact; an orphan object with no pointer flip is harmless and recoverable (§11.2, §11.3)\n- Transact updates `latest-checkpoint` (`tree_size`, `s3_key`, `signed_at`, `epoch`) and batch status Committed atomically — both or neither\n- Epoch mismatch → `LostLease` with no visible mutation of either item\n- `latest-checkpoint.tree_size` never regresses (condition enforces monotonicity)\n- `read_latest_checkpoint` returns typed record; `NotFound` on empty log\n- Integration test against LocalStack DDB+S3 behind `--features integration` (§19.1)\n\n## Out of Scope\n- Checkpoint construction/HSM signing (ca-service checkpoint-signer)\n- Revocation pointer (stor-revocation-audit-access)\n\n## Testing\nUnit, property (pointer monotonic under random interleaved commits, §19.2), integration (LocalStack).\n\n## Demo\n`cargo test -p storage --features integration checkpoint_commit`; example prints the latest checkpoint record after two commits.",
+      "size": "M",
+      "priority": 1,
+      "phase": 2,
+      "deps": ["stor-write-once-objects", "stor-batch-state", "mtc-serialization", "aws-backend", "localstack-dev-env"],
+      "labels": ["storage-facade", "phase-2", "critical-path"]
+    },
+    {
+      "slug": "stor-tile-cache",
+      "title": "LRU tile cache with read-through and hit/miss instrumentation",
+      "description": "## Goal\nImplement the in-memory LRU tile cache (§8.4): tiles are immutable so caching is unconditionally safe; read-through over `read_tile` (stor-tile-writer); shared via `Arc<TileCache>` (§11.4 CaService field); hit/miss instrumented (§20.1: tile cache hit/miss is a named signal; OQ-5: start LRU, profile later).\n\n## Acceptance Criteria\n- Configurable capacity (bytes or tile count); LRU eviction order verified by a deterministic access-sequence test\n- `get(level, index)`: cache hit returns without backend I/O (asserted via a call-counting backend); miss fetches via `read_tile`, populates, returns\n- Concurrency stress test: 8+ tasks x 1k random `get`s over a 100-tile keyspace complete without deadlock and every returned tile is byte-identical to backend bytes\n- Concurrent misses for the same tile store at most one entry; capacity accounting stays exact under the stress test\n- Hit/miss/eviction counters exposed for the metrics layer (§20.1)\n- Cached bytes always identical to backend bytes (immutability means no invalidation path exists — assert none is added)\n\n## Out of Scope\n- CloudFront/CDN caching (read-path epic)\n- Checkpoint cache (stor-checkpoint-cache)\n- Eviction-policy tuning beyond LRU (OQ-5 follow-up)\n\n## Testing\nUnit; property (cache-backed reads == direct backend reads for arbitrary access patterns, §19.2); multi-threaded stress test under `cargo test`.\n\n## Demo\n`cargo test -p storage tile_cache`; example runs 10k reads over a 100-tile log and prints hit ratio.",
+      "size": "M",
+      "priority": 1,
+      "phase": 2,
+      "deps": ["stor-tile-writer"],
+      "labels": ["storage-facade", "phase-2"]
+    },
+    {
+      "slug": "stor-checkpoint-cache",
+      "title": "Checkpoint cache: last N checkpoints by tree size",
+      "description": "## Goal\nImplement the checkpoint cache from §8.4: keep the last N checkpoints keyed by tree size in memory so status surfaces and proof paths avoid repeated backend reads.\n\n## Acceptance Criteria\n- Configurable N; inserting beyond capacity evicts the smallest tree size\n- `get(tree_size)` and `latest()` lookups; `latest()` agrees with `read_latest_checkpoint` after insert\n- Checkpoints are immutable once signed — cache never mutates an entry; divergent re-insert for the same tree size is rejected as an invariant violation\n- Thread-safe via `Arc`: a concurrent insert/get stress test (multiple tasks, interleaved operations) completes without panics, and every checkpoint among the N largest inserted remains retrievable afterward\n\n## Out of Scope\n- Checkpoint signature verification (core library / ca-service)\n- Tile cache (separate ticket)\n\n## Testing\nUnit; property (for random insert sequences, cache contents are exactly the N largest tree sizes inserted, §19.2); multi-threaded stress test under `cargo test`.\n\n## Demo\n`cargo test -p storage checkpoint_cache`; doctest showing eviction of the oldest checkpoint at capacity.",
+      "size": "S",
+      "priority": 2,
+      "phase": 2,
+      "deps": ["stor-checkpoint-commit"],
+      "labels": ["storage-facade", "phase-2"]
+    },
+    {
+      "slug": "stor-state-hydration",
+      "title": "In-memory CA state hydration on startup",
+      "description": "## Goal\nImplement startup hydration of the CA service's in-memory state (§8.4) and the consistency check promotion relies on (§13.3 step 1): read the latest checkpoint, verify the tile snapshot is consistent (recomputed root from stored tiles equals the checkpoint root — `tile_snapshot_consistent`), warm the tile cache with right-edge tiles, and initialize the local counter view.\n\n## Acceptance Criteria\n- `hydrate()` returns a typed `HydratedState { checkpoint, counter_view, ... }` on a consistent store\n- Root recomputed from tiles (tree-primitives) equals the checkpoint root; mismatch/missing tiles → typed `TilesInconsistent` error so callers can `wait_for_crr` (§13.3) rather than proceed\n- Empty log (no checkpoint item) hydrates to a well-defined empty state (bootstrap path)\n- Right-edge tiles for the current tree size are resident in the tile cache after hydration\n- Counter view initialized from the counter item but marked advisory (§8.4)\n\n## Out of Scope\n- Checkpoint signature verification and promotion/gap-fill logic (§13.3 steps in ca-service/multi-region)\n- CRR waiting/polling behavior (multi-region epic)\n\n## Testing\nUnit (memory backend); property (build random logs, hydrate, recomputed root always matches, §19.2); integration via stor-conformance-suite.\n\n## Demo\n`cargo run -p storage --example hydrate_demo` seeds a memory-backend log, hydrates, and prints tree size, root, and cache warmth.",
+      "size": "M",
+      "priority": 1,
+      "phase": 2,
+      "deps": ["stor-checkpoint-commit", "stor-tile-cache", "stor-counter-allocate", "tree-primitives"],
+      "labels": ["storage-facade", "phase-2"]
+    },
+    {
+      "slug": "stor-revocation-audit-access",
+      "title": "Raw access: latest-revocation pointer, revocations/ objects, audit items",
+      "description": "## Goal\nProvide raw access patterns for the remaining §8.1/§8.2 surfaces: `revocations/{tree_size}.signed` objects, the `latest-revocation` pointer item, and `audit#{tree_size}` items written by the self-auditor.\n\n## Acceptance Criteria\n- `write_revocation(tree_size, bytes)`: write-once object at the §8.1 revocation key, then epoch-conditioned update of `latest-revocation` (`tree_size`, `s3_key`, `signed_at`, `epoch` per §8.2)\n- `read_latest_revocation` typed read; `NotFound` before first revocation list\n- `put_audit_record(tree_size, record)` / `query_audit_records(range)` over the `audit#` SK pattern (§20.2 self-auditor step 6)\n- All mutating KV writes carry the epoch condition (§8.3); pointer tree_size monotonic\n\n## Out of Scope\n- Revocation list format, signing, and distribution (revocation epic, §16)\n- Self-auditor verification logic (observability epic, §25.8)\n\n## Testing\nUnit + property (memory backend, §19.2); LocalStack via stor-conformance-suite (§19.1).\n\n## Demo\n`cargo test -p storage revocation_audit`; doctest writing a revocation object and reading back the pointer.",
+      "size": "S",
+      "priority": 2,
+      "phase": 2,
+      "deps": ["stor-ddb-schema", "stor-write-once-objects"],
+      "labels": ["storage-facade", "phase-2"]
+    },
+    {
+      "slug": "stor-conformance-suite",
+      "title": "Facade conformance suite: memory vs LocalStack behavioral parity",
+      "description": "## Goal\nApply the §9.7 shared-suite pattern at the facade level: one behavioral suite run against `S3DdbStorage` over the memory backend (plain `cargo test`) and over LocalStack AWS backends (`--features integration`, §19.1), guaranteeing the facade behaves identically regardless of backend. This is where the tickets that deferred LocalStack coverage (write-once, lease, batch, entry, tile, revocation/audit, hydration) get their integration runs.\n\n## Acceptance Criteria\n- Suite covers the facade invariants: write-once enforcement on all object categories (§8.1), epoch condition on every mutating KV op (§8.3), counter monotonic/non-overlapping, batch state machine legality, checkpoint and revocation pointers monotonic, hydration consistency\n- Memory run completes in the <30s unit budget with zero external deps (§19.1)\n- LocalStack run gated behind `--features integration` and wired into CI's integration job\n- One factory-parameterized suite — a new backend is one factory closure (§9.7)\n- Failures name the invariant violated, not just the assertion line\n\n## Out of Scope\n- Cross-backend suites for raw cloud traits (cloud-abstraction owns cloud-test-suite)\n- Chaos/soak scenarios (testing-infrastructure epic)\n\n## Testing\nUnit + integration by construction; property assertions reused from per-ticket tests (§19.2).\n\n## Demo\n`cargo test -p storage` then `make integration-storage` (LocalStack up) — same suite, both green.",
+      "size": "M",
+      "priority": 1,
+      "phase": 2,
+      "deps": ["stor-counter-allocate", "stor-batch-state", "stor-checkpoint-commit", "stor-entry-writer", "stor-tile-writer", "stor-lease-raw-access", "stor-revocation-audit-access", "stor-state-hydration", "localstack-dev-env"],
+      "labels": ["storage-facade", "phase-2", "testing"]
+    },
+    {
+      "slug": "stor-fake-storage",
+      "title": "FakeStorage test double with failure injection",
+      "description": "## Goal\nShip the `FakeStorage` test-only implementation of `Storage` (§23.6 codemap lists it explicitly) with scriptable failure injection, so ca-service unit tests can exercise failure modes (§11.3) without composing real backends.\n\n## Acceptance Criteria\n- `FakeStorage` implements the full `Storage` trait; gated behind a `test-util` feature (usable from other crates' tests, excluded from release builds)\n- Per-method failure injection: fail-once, fail-always, delayed response — enough to simulate lost lease, write timeouts, and crash-between-steps scenarios from §11.3\n- Internal state (entries, tiles, checkpoints, batch items) inspectable by tests\n- Registered as a factory in the facade conformance suite (§9.7); the suite's memory-mode run passes against `FakeStorage` with no injection active, keeping the double behaviorally honest\n\n## Out of Scope\n- Chaos testing scenarios themselves (testing-infrastructure epic)\n- The memory cloud backend (cloud-abstraction epic — this is a facade-level double)\n\n## Testing\nUnit self-tests for injection semantics; conformance suite memory run (§19.1).\n\n## Demo\nDoctest in the crate README: inject `LostLease` on `commit_checkpoint` and assert the caller surfaces `IssueError`-shaped failure.",
+      "size": "S",
+      "priority": 1,
+      "phase": 2,
+      "deps": ["storage-facade-core", "stor-conformance-suite"],
+      "labels": ["storage-facade", "phase-2", "dx", "testing"]
+    },
+    {
+      "slug": "stor-tracing-spans",
+      "title": "Tracing spans and cache metrics on every facade operation",
+      "description": "## Goal\nInstrument the storage facade per §20.1: every DDB and S3 call is a `tracing` span, and tile cache hit/miss is instrumented, so issuance is traceable end-to-end once the CA service exists.\n\n## Acceptance Criteria\n- Every `Storage` method opens a span with structured fields: operation, object key or SK, epoch where applicable, byte counts\n- Tile cache exposes hit/miss/eviction as span events/counters consumable by the metrics layer (§20.1)\n- Error paths record the `StorageError` variant on the span\n- No secrets or entry payload bytes in span fields\n- Overhead bounded: instrumented unit-test suite still completes within the §19.1 <30s budget\n\n## Out of Scope\n- OTel exporter wiring, dashboards, SLOs (observability epic)\n- HSM spans (ca-service checkpoint-signer)\n\n## Testing\nUnit with a capturing `tracing` subscriber asserting span names/fields per method (§19.1).\n\n## Demo\n`RUST_LOG=storage=trace cargo run -p storage --example hydrate_demo` prints a readable span tree for one hydration.",
+      "size": "S",
+      "priority": 2,
+      "phase": 2,
+      "deps": ["stor-conformance-suite"],
+      "labels": ["storage-facade", "phase-2", "observability"]
+    },
+    {
+      "slug": "stor-docs-readme",
+      "title": "Storage crate docs: README, CODEMAP entry, add-storage-method guide",
+      "description": "## Goal\nShip the documentation obligations §23.5–23.6 place on this crate: a hierarchical README (purpose, public API, gotchas), the CODEMAP entry, and the `add-storage-method.md` pattern/skill doc (§23.4) so agents can extend the `Storage` interface correctly.\n\n## Acceptance Criteria\n- `crates/storage/README.md` states purpose, public API surface (`Storage`, `S3DdbStorage`, `FakeStorage`), and the two load-bearing invariants: objects are write-once (§8.1) and every KV write is epoch-conditioned (§8.3)\n- `make codemap` output includes the storage crate entry matching the §23.6 format (PURPOSE / PUBLIC API / DEPENDS ON / USED BY)\n- `add-storage-method.md` walks the full touchpoint list: trait, `S3DdbStorage` impl, `FakeStorage`, conformance suite case, tracing span, README/CODEMAP refresh\n- Docs cite spec section numbers so agents can jump to authority\n\n## Out of Scope\n- ADRs for storage decisions (written when decisions occur, per §23.5)\n- Skills-infrastructure scaffolding (foundation/agent-harnessing epics)\n\n## Testing\nCI docs checks (link/lint) as available; `make codemap` runs clean. No code layers apply (§19.1).\n\n## Demo\n`make codemap` shows the storage entry; a fresh agent following `add-storage-method.md` can list every file a new method touches.",
+      "size": "S",
+      "priority": 2,
+      "phase": 2,
+      "deps": ["stor-conformance-suite", "stor-fake-storage"],
+      "labels": ["storage-facade", "phase-2", "docs", "dx"]
+    }
+  ]
+}

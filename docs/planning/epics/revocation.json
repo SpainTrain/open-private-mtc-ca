@@ -1,0 +1,232 @@
+{
+  "epic": {
+    "slug": "revocation",
+    "title": "Revocation",
+    "description": "Implement MTC log revocation end-to-end per spec section 16: the signed RevocationList format with revoked index ranges, the event-driven revocation-processor Lambda that generates and HSM-signs new lists, distribution via CloudFront-fronted S3 with hourly cadence plus push notification for near-real-time emergency refresh, and the operator-facing emergency revocation flow (CLI + admin UI + runbook). All work runs locally against LocalStack/SoftHSM with cdk-synth assertions for infra; pruning belongs to the pruning-retention epic."
+  },
+  "tickets": [
+    {
+      "slug": "rev-list-format",
+      "title": "RevocationList domain type with normalized revoked-range set",
+      "description": "## Goal\nImplement the `RevocationList` domain type per spec §16.1 (`log_id`, `tree_size`, `revoked` ranges, `signed_at`, `signature`) plus a `RevokedRanges` value type with enforced invariants, in a new `crates/revocation` library.\n\n## Acceptance Criteria\n- `RevocationList` struct uses newtypes from core-mtc-types (§22): `TrustAnchorID`, index/tree-size types\n- `RevokedRanges` constructor normalizes to sorted, non-overlapping, adjacency-merged `(start_index, end_index)` ranges; rejects `start > end` and ranges beyond `tree_size`\n- `is_revoked(index) -> bool` via binary search; `add_range` returns a new normalized set\n- Invalid states unrepresentable: normalized set only constructible via validating constructors\n- Unit tests: empty list, single index, adjacent/overlapping merges, boundary indices\n- Property tests (`proptest`, §19.2): normalization idempotent; `is_revoked` agrees with naive linear scan for arbitrary range sets; merging two sets preserves membership\n\n## Out of Scope\n- Wire serialization and signature bytes (rev-list-serialization)\n- Signing (rev-signer); storage (rev-storage-ops)\n\n## Testing\nUnit, property (§19).\n\n## Demo\n`cargo test -p revocation` green; crate doc example constructs a list and queries `is_revoked`.",
+      "size": "S",
+      "priority": 1,
+      "phase": 7,
+      "deps": [
+        "core-mtc-types"
+      ]
+    },
+    {
+      "slug": "rev-list-serialization",
+      "title": "RevocationList wire serialization and signing payload",
+      "description": "## Goal\nAdd TLS-presentation serialize/parse for `RevocationList` (§16.1) including the canonical signing-payload encoding of the fields covered by `signature`, following the wire-format conventions of the mtc-serialization layer.\n\n## Acceptance Criteria\n- `serialize_tls_presentation` / `parse_tls_presentation` for `RevocationList`; separate `signing_payload()` producing deterministic bytes over `log_id`, `tree_size`, `revoked`, `signed_at` (§16.1)\n- Parser never panics on untrusted bytes; refuses inputs claiming impossible sizes; bounded recursion (§19.3 asserted properties)\n- `Arbitrary` impl for `RevocationList`; proptest round-trip `parse(serialize(x)) == x` at extended iteration counts (§19.3 layer 1)\n- Malformed-input unit tests: truncated buffer, overlapping-range encoding rejected, trailing garbage rejected\n\n## Out of Scope\n- Fuzz targets (rev-list-fuzz-target)\n- Signature generation/verification (rev-signer)\n\n## Testing\nUnit, property (§19.2, §19.3 layer 1).\n\n## Demo\n`cargo test -p revocation` shows round-trip proptest passing; `make test-prop` includes the new cases.",
+      "size": "S",
+      "priority": 1,
+      "phase": 7,
+      "deps": [
+        "rev-list-format",
+        "mtc-serialization"
+      ]
+    },
+    {
+      "slug": "rev-list-fuzz-target",
+      "title": "cargo-fuzz target for RevocationList parsing",
+      "description": "## Goal\nAdd the `RevocationList` fuzz target required by §19.3 (\"one target per externally-parseable type\"), covering both unstructured and structured fuzzing layers.\n\n## Acceptance Criteria\n- `fuzz/fuzz_targets/parse_revocation_list.rs`: arbitrary bytes into `parse_tls_presentation`, asserting no panic, no UB, no excessive allocation (§19.3 layer 2)\n- Structured target via `arbitrary` bridge: semi-valid lists fed to range-normalization and `is_revoked` paths without panics (§19.3 layer 3)\n- Seed corpus checked in under `fuzz/corpus/parse_revocation_list/` including valid lists from proptest generators (§19.3 corpus management)\n- Any crash inputs minimized and added as unit-test regression fixtures\n- Targets wired into the repo's existing fuzz CI job\n\n## Out of Scope\n- Fuzz harness infrastructure itself (testing-infrastructure epic)\n- Differential fuzzing vs bwesterb/mtc (RevocationList is not a Go-reference type)\n\n## Testing\nFuzz (§19.3), unit (regression fixtures).\n\n## Demo\n`cargo fuzz run parse_revocation_list -- -runs=100000` completes clean locally.",
+      "size": "S",
+      "priority": 2,
+      "phase": 7,
+      "deps": [
+        "rev-list-serialization",
+        "EXTERNAL:cargo-fuzz harness scaffolding from testing-infrastructure epic"
+      ]
+    },
+    {
+      "slug": "rev-signer",
+      "title": "Revocation list signing/verification via Hsm trait with dedicated key",
+      "description": "## Goal\nSign and verify `RevocationList` snapshots using the dedicated revocation-list key (§14.1: ECDSA P-256 in v1) through the `Hsm` trait, mirroring the checkpoint-signer pattern.\n\n## Acceptance Criteria\n- `RevocationSigner` takes `dyn Hsm` + revocation key id; produces `signature` over `signing_payload()` (§16.1)\n- `verify_revocation_list(&list, &public_key)` free function usable by relying parties without HSM access\n- Key id is distinct from checkpoint/pruning keys (§14.1 table); wrong-key signatures fail verification\n- HSM never asked to sign malformed payloads: signer only accepts validated `RevocationList` values (§19.6)\n- Unit tests against memory-backend fake HSM: sign/verify round-trip, tampered payload rejected, wrong key rejected\n- Integration test against SoftHSM PKCS#11 backend gated behind `--features integration` (§19.1)\n\n## Out of Scope\n- Key generation/rotation ceremonies (HSM epic scope)\n- Processor orchestration (rev-processor-core)\n\n## Testing\nUnit, integration (SoftHSM), cryptographic invariant tests (§19.6).\n\n## Demo\n`cargo test -p revocation --features integration` signs and verifies a list against SoftHSM in the compose dev env.",
+      "size": "S",
+      "priority": 1,
+      "phase": 7,
+      "deps": [
+        "rev-list-serialization",
+        "cloud-abstraction-traits",
+        "memory-backend",
+        "softhsm-backend"
+      ]
+    },
+    {
+      "slug": "rev-storage-ops",
+      "title": "Revocation storage: S3 revocations/ objects + DDB latest-revocation pointer",
+      "description": "## Goal\nExtend the storage facade with revocation persistence: immutable signed-list objects under `revocations/` (§8.1) and the atomically-updated `latest-revocation` DDB item (§8.2, §16.3 step 5).\n\n## Acceptance Criteria\n- PR 1: `write_revocation_list` stores signed bytes at deterministic zero-padded key `revocations/{tree_size:016}.signed` (§8.1, §16.3 step 4); write-once semantics — re-write of an existing key with different bytes errors; `read_revocation_list(key)` round-trips\n- PR 2: `latest-revocation` pointer ops with attributes `tree_size, s3_key, signed_at, epoch` (§8.2); update is a conditional write requiring monotonically non-decreasing `signed_at`/`tree_size` and matching epoch — stale-epoch writes rejected (§19.8)\n- Unit tests on memory backend; integration tests against LocalStack S3 + DDB behind `--features integration`\n- Property test: any sequence of concurrent pointer updates leaves the pointer at the maximal committed snapshot\n\n## Out of Scope\n- Object Lock retention validation (pruning-retention epic)\n- Processor logic (rev-processor-core)\n\n## Testing\nUnit, property, integration (§19.1).\n\n## Demo\nIntegration test output shows list object landing in LocalStack S3 and pointer advancing in DDB.",
+      "size": "M",
+      "priority": 1,
+      "phase": 7,
+      "deps": [
+        "storage-facade-core",
+        "rev-list-serialization"
+      ]
+    },
+    {
+      "slug": "rev-request-model",
+      "title": "Revocation request intake and audit records",
+      "description": "## Goal\nModel operator revocation requests and persist the audit trail required for the revocation report: range or single index, justification, incident ref, operator identity, timestamp (§16.3 step 1, §20.3 revocation log row).\n\n## Acceptance Criteria\n- `RevocationRequest` type: target (index or range), `justification: NonEmptyString`, `incident_ref`, operator identity, requested_at; validation rejects empty justification and out-of-bounds ranges\n- Requests persisted via storage facade (DDB item pattern consistent with §8.2 conventions) with status pending/processed\n- Query API: list pending requests; list all requests in a time range (feeds §20.3 report generation)\n- Unit tests: validation failures, pending-to-processed transition, time-range query\n- Integration test against LocalStack DDB\n\n## Out of Scope\n- Report generation and signing (observability epic, §20.3)\n- Processing requests into a list (rev-processor-core)\n\n## Testing\nUnit, integration (§19.1).\n\n## Demo\n`cargo test -p revocation` shows a request persisted and queried back with full audit fields.",
+      "size": "S",
+      "priority": 1,
+      "phase": 7,
+      "deps": [
+        "core-mtc-types",
+        "storage-facade-core"
+      ]
+    },
+    {
+      "slug": "rev-processor-core",
+      "title": "Revocation processor core logic (library, backend-agnostic)",
+      "description": "## Goal\nImplement the revocation-processor pipeline as a testable library crate per §16.3 steps 2-6: consume pending requests, produce a new signed `RevocationList`, persist it, advance the pointer, emit a refresh event.\n\n## Acceptance Criteria\n- PR 1: `process_revocations()` — load current list via pointer, merge all pending request ranges at current `tree_size`, sign via `RevocationSigner`, write object, conditionally advance pointer, mark requests processed; returns typed outcome\n- PR 2: idempotency + failure handling — pointer CAS failure retries with fresh read; crash between S3 write and pointer update is safe (re-run converges); no-op run (no pending requests) produces no new object\n- Emits a `RevocationPublished` event through a small notifier trait (implemented in rev-push-notification)\n- Unit tests on memory backend: single request, batched concurrent requests, CAS-conflict retry, crash-replay idempotency\n- Property test: processing any request sequence in any batching yields identical final revoked-range set\n\n## Out of Scope\n- Lambda wrapper and triggers (rev-lambda)\n- Push transport (rev-push-notification)\n\n## Testing\nUnit, property, integration via memory backend (§19.1, §19.2).\n\n## Demo\n`cargo test -p revocation` demonstrates request-to-signed-list pipeline against in-memory backends.",
+      "size": "M",
+      "priority": 1,
+      "phase": 7,
+      "deps": [
+        "rev-signer",
+        "rev-storage-ops",
+        "rev-request-model"
+      ]
+    },
+    {
+      "slug": "rev-lambda",
+      "title": "revocation-processor Lambda wrapper (emergency + hourly triggers)",
+      "description": "## Goal\nPackage rev-processor-core as the event-driven `revocation-processor` Lambda (§5 component table, §7) handling both emergency invocations and the hourly scheduled cadence (§16.2), runnable on LocalStack.\n\n## Acceptance Criteria\n- PR 1: `cargo-lambda` binary crate; event enum for emergency-trigger and scheduled-hourly payloads; S3/DDB/HSM clients cached at module level (§12.3 pattern)\n- PR 2: hourly behavior — scheduled run republishes only when pending requests exist or `signed_at` staleness exceeds cadence; emergency run always processes immediately; uses injected `Clock` (§18.4) so `make time-advance` exercises cadence logic\n- Emits metrics: list age seconds, publish latency (feeds §16.2 latency target and §20.2 revocation rate)\n- Deploys to LocalStack via dev-env compose; integration test invokes the function through LocalStack Lambda and asserts a new signed list + pointer update\n\n## Out of Scope\n- CDK constructs, EventBridge rule, SNS topic (rev-cdk-infra)\n- Notification delivery (rev-push-notification)\n\n## Testing\nUnit, integration (LocalStack, §19.1).\n\n## Demo\n`awslocal lambda invoke` with an emergency payload produces a new `revocations/*.signed` object visible via `awslocal s3 ls`.",
+      "size": "M",
+      "priority": 1,
+      "phase": 7,
+      "deps": [
+        "rev-processor-core",
+        "aws-backend",
+        "localstack-dev-env"
+      ]
+    },
+    {
+      "slug": "rev-cdk-infra",
+      "title": "CDK constructs for revocation Lambda, hourly schedule, and SNS topic",
+      "description": "## Goal\nDefine the revocation infrastructure in CDK (§16.2, §16.3): revocation-processor Lambda, EventBridge hourly schedule rule, SNS push-notification topic, and least-privilege IAM — validated by synth assertions, no real AWS deploy (§1 non-goals).\n\n## Acceptance Criteria\n- CDK construct `RevocationStack`: Lambda from rev-lambda asset, EventBridge rule `rate(1 hour)` targeting it (§16.2 hourly default), SNS topic for list-published notifications (§16.3 step 6)\n- IAM: Lambda role scoped to the `revocations/*` S3 prefix, the coordination-table revocation items, and SNS topic publish only; HSM connectivity supplied via env/secret config, not IAM\n- `cdk synth` assertion tests (jest) verify: rule schedule, Lambda env config, topic wiring, and that no wildcard resource grants exist\n- Constructs deployable to LocalStack via the dev-env flow so the hourly rule fires locally\n\n## Out of Scope\n- CloudFront cache behavior (rev-distribution-cdn)\n- Production account deployment (spec §1 non-goal)\n\n## Testing\nUnit (cdk synth assertions), integration (LocalStack deploy smoke).\n\n## Demo\n`npm test` in the CDK app shows RevocationStack assertions green; `make dev-env` brings the rule + Lambda up in LocalStack.",
+      "size": "S",
+      "priority": 1,
+      "phase": 7,
+      "deps": [
+        "cdk-skeleton",
+        "rev-lambda"
+      ]
+    },
+    {
+      "slug": "rev-distribution-cdn",
+      "title": "CloudFront-fronted revocation list distribution config",
+      "description": "## Goal\nServe the current revocation list through the CloudFront-fronted S3 read path (§16.2) with cache behavior tuned so relying parties meet the 15-minute freshness target.\n\n## Acceptance Criteria\n- CloudFront cache behavior for `/revocations/*`: immutable list objects get TTL >= 24h (keyed by tree_size, never mutated per §8.1 invariants); the latest-pointer lookup path gets TTL <= 60s\n- Latency budget documented in the construct README: pointer TTL + hourly cadence + push refresh keeps 99% of relying parties within 15 min (§16.2)\n- Emergency path decision recorded with the math: push notification + pointer re-fetch, no CloudFront invalidation call needed because pointer TTL <= 60s\n- `cdk synth` assertion tests verify the behavior exists, both TTL values, and origin access scoped to the log bucket `revocations/` prefix only\n- Local dev: equivalent path served by the LocalStack/dev proxy so the list URL works without CloudFront\n\n## Out of Scope\n- The base CloudFront distribution (read-path epic)\n- Push notification transport (rev-push-notification)\n\n## Testing\nUnit (cdk synth assertions), E2E via local proxy path.\n\n## Demo\n`curl` the local read-path endpoint for the latest revocation pointer, then fetch the referenced `revocations/*.signed` object and confirm its bytes match the S3 object.",
+      "size": "S",
+      "priority": 1,
+      "phase": 7,
+      "deps": [
+        "cdk-skeleton",
+        "EXTERNAL:CloudFront distribution construct from read-path epic"
+      ]
+    },
+    {
+      "slug": "rev-push-notification",
+      "title": "Push notification for near-real-time revocation refresh",
+      "description": "## Goal\nImplement §16.2/§16.3 step 6: publishing a push notification when a new revocation list commits, so subscribers refresh immediately instead of waiting for the hourly cadence.\n\n## Acceptance Criteria\n- `RevocationNotifier` trait impl publishing `RevocationPublished { tree_size, s3_key, signed_at }` to the SNS topic; memory impl for unit tests\n- Publish happens only after the pointer update succeeds (§16.3 ordering) — no notifications for uncommitted lists\n- LocalStack wiring: SQS queue subscribed to the topic in dev compose; example subscriber that re-fetches the list on message\n- Integration test: emergency processing run results in a queue message within seconds, and the message's `s3_key` matches the pointer\n- Publish failure does not roll back the commit; it is retried and surfaced as a metric/alarm condition\n\n## Out of Scope\n- SNS topic CDK definition (rev-cdk-infra)\n- Relying-party client caching policy (rev-verify-check)\n\n## Testing\nUnit, integration (LocalStack SNS/SQS, §19.1).\n\n## Demo\nRun the demo subscriber, `mtcctl revocation distribute`, and watch the refresh message arrive in the terminal.",
+      "size": "S",
+      "priority": 1,
+      "phase": 7,
+      "deps": [
+        "rev-processor-core",
+        "localstack-dev-env"
+      ]
+    },
+    {
+      "slug": "rev-admin-api",
+      "title": "Admin API endpoints for revocation operations",
+      "description": "## Goal\nExpose revocation operations through the admin API per the §17.5 end-to-end flow, so CLI and UI share one OpenAPI-defined surface (§17.2).\n\n## Acceptance Criteria\n- PR 1: OpenAPI additions + `make api-gen`: `GET /revocations/current` (list + metadata), `POST /revocations` (add range/index with required justification + incident ref, privileged), `POST /revocations/distribute` (trigger emergency processing + push, privileged)\n- PR 2: axum handlers in `crates/admin`: POST persists a `RevocationRequest` and invokes the processor; distribute triggers the emergency path; responses include new `tree_size`/`s3_key`\n- Privileged endpoints record operator identity into the audit record (§20.3); missing justification returns 400\n- Handler unit tests on memory backend; integration test via LocalStack covering the full add-then-distribute sequence\n\n## Out of Scope\n- CLI subcommands (rev-cli) and UI page (rev-ui)\n- AuthN/AuthZ machinery itself (admin-surface epic)\n\n## Testing\nUnit, integration (§19.1).\n\n## Demo\n`curl -X POST localhost:PORT/api/revocations -d '{...}'` then `GET /revocations/current` shows the new range.",
+      "size": "M",
+      "priority": 1,
+      "phase": 7,
+      "deps": [
+        "admin-api-core",
+        "openapi-codegen-pipeline",
+        "rev-processor-core"
+      ]
+    },
+    {
+      "slug": "rev-cli",
+      "title": "mtcctl revocation subcommands and cert revoke",
+      "description": "## Goal\nImplement the CLI surface from §17.3: `mtcctl revocation list|add|distribute` and `mtcctl cert revoke`, driving the admin API endpoints.\n\n## Acceptance Criteria\n- PR 1: `mtcctl revocation list` (human table + `--output json|yaml`), `mtcctl revocation add --start N --end M --justification ... --incident-ref ...` (privileged: requires `--confirm` or interactive confirmation, `--yes` for automation per §17.3)\n- PR 2: `mtcctl revocation distribute` (privileged, triggers emergency redistribution) and `mtcctl cert revoke --index N` as sugar for a single-index range add (§16.3 step 1 operator entrypoint)\n- Missing justification/incident-ref is a client-side error before any API call\n- Help text documents each subcommand; shell completion picks up new commands\n- E2E shell test in `tests/e2e/` driving add → list → distribute against the demo env (§19.1)\n\n## Out of Scope\n- Admin API implementation (rev-admin-api)\n- `mtcctl report revocation` (observability epic, §20.3)\n\n## Testing\nUnit (arg parsing), E2E (§19.1).\n\n## Demo\n`mtcctl cert revoke --index 42 --justification \"demo\" --incident-ref DEMO-1 --yes && mtcctl revocation list`.",
+      "size": "M",
+      "priority": 1,
+      "phase": 7,
+      "deps": [
+        "rev-admin-api",
+        "EXTERNAL:mtcctl CLI scaffolding from admin-surface epic"
+      ]
+    },
+    {
+      "slug": "rev-ui",
+      "title": "Admin UI revocation page (view list, initiate emergency revocation)",
+      "description": "## Goal\nAdd the admin UI page for revocation per §16.3 step 1 and §17.4: view the current revocation list and initiate an emergency revocation with justification + incident ref.\n\n## Acceptance Criteria\n- PR 1: `templates/pages/revocations.html` + handler in `crates/admin/src/handlers/`: current list metadata (`tree_size`, `signed_at`, range count), revoked-ranges table, and add-range/revoke-cert form with required justification + incident-ref fields plus a privileged confirmation step (§17.3 authorization parity); missing fields rejected server-side with inline error\n- PR 2: \"Distribute now\" button triggering emergency redistribution, result surfaced inline via htmx swap; SSE update (§17.4) refreshes the list fragment when a `RevocationPublished` event lands — no manual reload\n- Askama compile-time template checks pass; handler unit tests on memory backend cover render, form-validation errors, and distribute trigger\n\n## Out of Scope\n- Tree-visualization overlay of revoked ranges (observability epic, §20.2)\n- API endpoints themselves (rev-admin-api)\n\n## Testing\nUnit, E2E (browser-less HTTP assertions in `tests/e2e/`).\n\n## Demo\n`make demo`, open the admin UI Revocations page, revoke an index with justification, watch the list update live.",
+      "size": "M",
+      "priority": 2,
+      "phase": 7,
+      "deps": [
+        "rev-admin-api",
+        "EXTERNAL:admin UI shell (htmx + Askama) from admin-surface epic"
+      ]
+    },
+    {
+      "slug": "rev-verify-check",
+      "title": "Relying-party revoked-range check in verification flow",
+      "description": "## Goal\nImplement §12.1 step 3: relying-party verification checks the certificate's index against the current revoked-ranges list, with signature-verified list fetching and caching.\n\n## Acceptance Criteria\n- PR 1: list client — fetch latest revocation list (pointer then immutable object), verify signature via `verify_revocation_list` with a pinned revocation public key, reject stale lists (`signed_at` older than configurable max age, default 2h per §16.2 hourly cadence); cache with max-age expiry plus an explicit `invalidate()` hook a push-notification subscriber can call\n- PR 2: verification-pipeline integration — revoked index yields a distinct `Revoked` failure variant, separated from proof/signature failures (feeds §20.2 failure-breakdown telemetry)\n- Unit tests: unrevoked passes, revoked fails, tampered list rejected, stale list rejected, `invalidate()` forces refetch\n- Property test: for arbitrary revoked-range sets, verification fails iff the index is in the set\n- Cryptographic invariant test (§19.6): a revoked cert's index, when removed and re-added, fails verification\n\n## Out of Scope\n- Verification library core (read-path epic)\n- Push transport (rev-push-notification)\n\n## Testing\nUnit, property, cryptographic invariants (§19.6).\n\n## Demo\n`mtcctl log verify` on a revoked cert exits non-zero with a Revoked reason; on an unrevoked cert it passes.",
+      "size": "M",
+      "priority": 1,
+      "phase": 7,
+      "deps": [
+        "rev-signer",
+        "EXTERNAL:verification library from read-path epic"
+      ]
+    },
+    {
+      "slug": "rev-e2e-emergency",
+      "title": "E2E emergency revocation flow test and demo",
+      "description": "## Goal\nProve the full §16.3 emergency flow end-to-end in the local environment and make it a repeatable demo, covering the §19.1 issue → verify → revoke scenario.\n\n## Acceptance Criteria\n- Shell E2E in `tests/e2e/` driving `mtcctl`: issue cert → `log verify` passes → `cert revoke` with justification + incident ref → processor Lambda runs → new signed list in S3 → `latest-revocation` pointer advanced → push notification received → `log verify` now fails with Revoked\n- Asserts audit record contains operator, justification, incident ref, timestamp (§20.3)\n- Measures and prints local end-to-end propagation time (initiate → subscriber refresh) as a proxy for the §16.2 15-minute target\n- Wired into `make test-e2e`; demo step added to `make demo` script output\n- Test is deterministic: uses fake clock (§18.4) and polls with bounded timeout\n\n## Out of Scope\n- Chaos variants (testing-infrastructure epic)\n- Multi-region revocation behavior during failover (multi-region epic)\n\n## Testing\nE2E (§19.1).\n\n## Demo\n`make test-e2e` runs the emergency-revocation scenario; the same script is the demo narrative.",
+      "size": "S",
+      "priority": 1,
+      "phase": 7,
+      "deps": [
+        "rev-cli",
+        "rev-cdk-infra",
+        "rev-push-notification",
+        "rev-verify-check",
+        "EXTERNAL:single-region issuance demo environment (ca-service epic)"
+      ]
+    },
+    {
+      "slug": "rev-fixture",
+      "title": "with-revocations deterministic test fixture",
+      "description": "## Goal\nProvide the `with-revocations` fixture from §18.5: a reproducible LocalStack + DDB snapshot containing issued certs with several revoked ranges, for demos, bug repro, and downstream tests.\n\n## Acceptance Criteria\n- `make fixture-load name=with-revocations` restores a state with: a populated log, at least 3 revoked ranges (single index, small range, range spanning a batch boundary), a signed current list, matching pointer, and audit records\n- Fixture built deterministically by a script (seeded issuance + revocation via processor core), then captured with `make fixture-save`\n- After load: `mtcctl revocation list` shows the expected ranges; `mtcctl log verify` fails for a known revoked index and passes for a known valid one (documented in fixture README)\n- Fixture used by at least one existing test or demo to prove load correctness in CI\n\n## Out of Scope\n- Fixture save/load machinery (local-dev-experience epic)\n- post-pruning fixture (pruning-retention epic)\n\n## Testing\nIntegration (fixture load smoke in CI), E2E consumers.\n\n## Demo\n`make fixture-load name=with-revocations && mtcctl revocation list` shows the canned revoked ranges.",
+      "size": "S",
+      "priority": 2,
+      "phase": 7,
+      "deps": [
+        "rev-processor-core",
+        "EXTERNAL:fixture save/load infrastructure from local-dev-experience epic",
+        "EXTERNAL:single-region issuance demo environment (ca-service epic)"
+      ]
+    },
+    {
+      "slug": "rev-runbook",
+      "title": "Emergency revocation runbook",
+      "description": "## Goal\nWrite the required emergency-revocation runbook (§21.2) in `docs/runbooks/emergency-revocation.md`, grounded in the shipped CLI/UI flow.\n\n## Acceptance Criteria\n- Follows the §21.2 structure: detection (alerts/signals that trigger revocation, e.g. suspected mis-issuance), initial assessment, mitigation steps, recovery procedure, postmortem template\n- Mitigation steps are copy-pasteable `mtcctl` commands (`cert revoke`, `revocation add`, `revocation distribute`) with justification/incident-ref conventions and privileged-confirmation notes (§17.3)\n- Covers verification of success: pointer advanced, push received, relying-party check fails for revoked index; and the §16.2 15-minute freshness expectation\n- Cross-links the suspected-key-compromise runbook boundary (that scenario escalates beyond list revocation)\n- Walkthrough validated against the E2E demo; every command in the doc executed successfully in the dev env\n\n## Out of Scope\n- Other required runbooks (owning epics per §21.2)\n- Alerting/dashboard implementation (observability epic)\n\n## Testing\nDoc validation via E2E walkthrough (commands exercised by `make test-e2e`).\n\n## Demo\nFollow the runbook top-to-bottom against `make demo` and reach the documented verified-revoked end state.",
+      "size": "S",
+      "priority": 2,
+      "phase": 7,
+      "deps": [
+        "rev-e2e-emergency"
+      ]
+    }
+  ]
+}

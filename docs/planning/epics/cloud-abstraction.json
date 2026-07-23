@@ -1,0 +1,159 @@
+{
+  "epic": {
+    "slug": "cloud-abstraction",
+    "title": "Cloud Abstraction Layer",
+    "description": "Build the cloud abstraction layer (spec §9): the four cloud-agnostic traits (ObjectStore, ObjectLock, ReplicatedKv, Hsm) in cloud-types, plus the cloud-memory, cloud-aws, cloud-localstack, and cloud-softhsm backend crates, wired through a Backend factory selected by runtime config and Cargo features. A shared cloud-test-suite crate guarantees behavioral consistency by running identical conformance suites against every backend — memory in unit tests, AWS via LocalStack, and SoftHSM2 via PKCS#11 — all runnable on a laptop with zero cloud spend (§1, §18)."
+  },
+  "tickets": [
+    {
+      "slug": "cloud-abstraction-traits",
+      "title": "Define cloud-types crate: ObjectStore, ObjectLock, ReplicatedKv, Hsm traits",
+      "description": "## Goal\nCreate `crates/cloud-types` with the four async cloud-capability traits, common DTOs, and error taxonomy per spec §9.1/§9.3, including `is_fips_validated()` on `Hsm` per §14.4. This is the critical-path anchor that blocks all storage and CA service work (§25.5).\n\n## Acceptance Criteria\n- Crate `cloud-types` exists with modules `object_store.rs`, `object_lock.rs`, `replicated_kv.rs`, `hsm.rs`, `errors.rs` (§9.3)\n- `ObjectStore`: `put/get/head/list/delete`; `PutOptions` supports if-not-exists (no-overwrite) semantics upholding the append-only invariant (§8, §9.7 `test_overwrite_fails`)\n- `ObjectLock`: `put_with_retention`, `extend_retention`, `get_retention` (§9.1)\n- `ReplicatedKv`: `get`, conditional `put`, `atomic_update`, `transact`, `query` plus `Key`/`Item`/`Value`/`Condition`/`UpdateExpression`/`Operation` DTOs (§9.1)\n- `Hsm`: `sign`, `get_public_key`, `generate_key`, and `is_fips_validated() -> bool` (§14.4)\n- Error taxonomy distinguishes `NotFound`, `ConditionFailed`, `AlreadyExists`, `RetentionViolation`, and retryable transport errors\n- All traits object-safe and usable as `Arc<dyn Trait>` with `Send + Sync` bounds (§9.4)\n- Rustdoc on every method states the required capability bar from §9.5\n\n## Out of Scope\n- Any backend implementation (memory/AWS/SoftHSM tickets); `Backend` factory (cloud-backend-factory); storage facade and tile cache (storage-facade epic)\n\n## Testing\n- Unit (§19.1): compile-time object-safety assertions (`Arc<dyn Trait>` usage), error-classification helper tests; no external dependencies\n\n## Demo\n`cargo doc -p cloud-types --open` shows the four documented traits; `cargo test -p cloud-types` green.",
+      "size": "M",
+      "priority": 0,
+      "phase": 2,
+      "deps": [],
+      "labels": ["cloud-abstraction", "rust", "critical-path"]
+    },
+    {
+      "slug": "memory-backend",
+      "title": "cloud-memory: pure in-memory implementation of all four cloud traits",
+      "description": "## Goal\nImplement `crates/cloud-memory` — pure-memory implementations of all four `cloud-types` traits so every downstream crate can unit test with zero external dependencies (§9.3, §9.6). Second cloud-abstraction priority on the critical path (§25.5).\n\n## Acceptance Criteria\n- `MemoryObjectStore`: map-backed put/get/head/list/delete; rejects overwrite with `AlreadyExists` when `PutOptions` requires if-not-exists (§9.7)\n- `MemoryObjectLock`: retention windows enforced against an injectable `Clock` (§22.11, §18.4 pattern); `extend_retention` forward-only; delete during retention rejected with `RetentionViolation` (§9.5)\n- `MemoryReplicatedKv`: conditional put, `atomic_update`, all-or-nothing `transact`, prefix `query`; shareable as `Arc<dyn ReplicatedKv>` across tokio tasks with interior locking, no `unsafe`\n- Property test: 100 concurrent tokio tasks racing conditional puts on one key yield exactly one `Ok` per round; `transact` with one failing condition applies zero ops (§19.2)\n- `MemoryHsm`: ECDSA P-256 via RustCrypto `p256` (§14.1); `generate_key`/`sign`/`get_public_key`; `is_fips_validated() == false` (§14.4)\n- Zero external dependencies: no Docker, no LocalStack, no SoftHSM (§9.6)\n- Full crate test run completes fast enough for the <30s unit budget (§19.1)\n\n## Out of Scope\n- Shared conformance suite definitions (cloud-test-suite tickets); `Backend` factory wiring; persistence of any kind\n\n## Testing\n- Unit (§19.1) per trait impl\n- Property (`proptest`, §19.2): concurrent conditional CAS admits exactly one winner; `transact` never partially applies\n\n## Demo\nWith Docker stopped: `cargo test -p cloud-memory` — all green, sub-second.",
+      "size": "M",
+      "priority": 0,
+      "phase": 2,
+      "deps": ["cloud-abstraction-traits"],
+      "labels": ["cloud-abstraction", "rust", "critical-path"]
+    },
+    {
+      "slug": "cloud-test-suite-object",
+      "title": "cloud-test-suite: shared ObjectStore + ObjectLock conformance suites",
+      "description": "## Goal\nCreate `crates/cloud-test-suite` with the factory-closure suite pattern from §9.7 and ship the `ObjectStore` and `ObjectLock` suites, validated against `cloud-memory`. Every backend (current and future GCP/Azure) must pass these identical tests.\n\n## Acceptance Criteria\n- Crate `cloud-test-suite` with generic `run_object_store_suite(factory)` matching the §9.7 signature shape\n- ObjectStore suite covers: put/get round-trip, overwrite-fails under if-not-exists, list-with-prefix, head metadata, delete, get-missing returns `NotFound`\n- `run_object_lock_suite` covers: `put_with_retention` + `get_retention` round-trip, extend forward-only (shortening rejected), delete during retention rejected (§9.5 append-only bar)\n- Both suites wired in `cloud-memory/tests/` and passing (§9.7)\n- Suite helpers usable from other crates' `tests/` dirs without copy-paste\n\n## Out of Scope\n- ReplicatedKv and Hsm suites (cloud-test-suite-kv, cloud-test-suite-hsm); running suites against AWS/SoftHSM backends (conformance tickets)\n\n## Testing\n- Unit (§19.1): suites executed against the memory backend prove the suite itself; suites become the integration layer when backend crates adopt them\n\n## Demo\n`cargo test -p cloud-memory` output shows `object_store_suite` and `object_lock_suite` cases passing.",
+      "size": "M",
+      "priority": 1,
+      "phase": 2,
+      "deps": ["memory-backend"],
+      "labels": ["cloud-abstraction", "testing", "rust"]
+    },
+    {
+      "slug": "cloud-test-suite-kv",
+      "title": "cloud-test-suite: shared ReplicatedKv conformance suite",
+      "description": "## Goal\nAdd `run_replicated_kv_suite` to `cloud-test-suite` (§9.7) covering the conditional-write and transactional semantics the lease/epoch protocol and write path depend on (§8.3, §9.5), validated against `cloud-memory`.\n\n## Acceptance Criteria\n- Suite covers: get/put round-trip; conditional put success and `ConditionFailed` on violated condition; `atomic_update` with condition expression; `transact` is all-or-nothing when one op's condition fails; `query` returns all items under a prefix\n- Property test (`proptest`, §19.2): N concurrent conditional CAS attempts on the same key yield exactly one success per round — the invariant multi-region leasing builds on (§9.5 \"Conditional KV writes\")\n- Suite wired in `cloud-memory/tests/` and passing\n- Failure-mode assertions use the shared `cloud-types` error taxonomy, not backend-specific errors\n\n## Out of Scope\n- Running against DynamoDB/LocalStack (cloud-aws-conformance); lease/epoch protocol itself (multi-region epic); Kani harnesses for index allocation (storage-facade epic)\n\n## Testing\n- Unit + property (§19.1, §19.2) against memory backend; reused as integration suite by backend crates\n\n## Demo\n`cargo test -p cloud-memory` shows `replicated_kv_suite` cases including the concurrent-CAS property test passing.",
+      "size": "M",
+      "priority": 1,
+      "phase": 2,
+      "deps": ["memory-backend"],
+      "labels": ["cloud-abstraction", "testing", "rust"]
+    },
+    {
+      "slug": "cloud-test-suite-hsm",
+      "title": "cloud-test-suite: shared Hsm conformance suite",
+      "description": "## Goal\nAdd `run_hsm_suite` to `cloud-test-suite` (§9.7) so every HSM backend (memory, SoftHSM, later CloudHSM) proves identical signing behavior, validated against `MemoryHsm`.\n\n## Acceptance Criteria\n- Suite covers: `generate_key(EcdsaP256)` → `get_public_key` → `sign` → signature verifies with a RustCrypto `p256` verifier (§14.1, §19.6 cryptographic invariant style)\n- Signing with an unknown `KeyHandle` returns a typed error, never a panic\n- Suite signature takes `expected_fips: bool` and asserts `is_fips_validated() == expected_fips` (§14.4); memory run passes `false`\n- Deterministic message set plus a small randomized message property case\n- Suite wired in `cloud-memory/tests/` and passing\n\n## Out of Scope\n- SoftHSM/PKCS#11 execution of this suite (cloud-softhsm-conformance); key rotation and cross-region key replication ceremonies (multi-region epic, §14.2); ML-DSA (v2, core-mtc-library feature flag)\n\n## Testing\n- Unit + light property (§19.1, §19.2) against memory backend; becomes the integration suite for cloud-softhsm\n\n## Demo\n`cargo test -p cloud-memory` shows `hsm_suite` sign/verify round-trip passing.",
+      "size": "S",
+      "priority": 1,
+      "phase": 2,
+      "deps": ["memory-backend"],
+      "labels": ["cloud-abstraction", "testing", "rust"]
+    },
+    {
+      "slug": "aws-backend",
+      "title": "cloud-aws crate: S3ObjectStore and S3ObjectLock implementations",
+      "description": "## Goal\nCreate `crates/cloud-aws` and implement `ObjectStore` and `ObjectLock` over `aws-sdk-s3` (§9.3), exercised exclusively against LocalStack — no real AWS spend (§1 non-goals).\n\n## Acceptance Criteria\n- Crate scaffolding with `s3_object_store.rs` and `s3_object_lock.rs` per the §9.3 layout\n- `S3ObjectStore`: put (If-None-Match for no-overwrite semantics), get, head, paginated list, delete\n- `S3ObjectLock`: retention via S3 Object Lock; COMPLIANCE-mode semantics and any LocalStack emulation caveats documented in rustdoc (§9.5 retention bar)\n- SDK errors mapped onto the `cloud-types` error taxonomy (retryable vs terminal, `ConditionFailed`/`AlreadyExists` on precondition failure)\n- Client construction accepts injected endpoint/credentials config so LocalStack and (hypothetically) real AWS use the same code path\n- Integration tests gated behind `--features integration` (§19.1) and green against LocalStack\n\n## Out of Scope\n- DynamoDB `ReplicatedKv` (cloud-aws-ddb-kv); CloudHSM (cloud-aws-cloudhsm); running the shared suites in CI (cloud-aws-conformance); S3 bucket layout/schema (storage-facade epic)\n\n## Testing\n- Unit (§19.1): error-mapping and request-shaping tests without network\n- Integration (§19.1): LocalStack-backed tests behind `--features integration`\n\n## Demo\n`docker compose up -d localstack && cargo test -p cloud-aws --features integration` green.",
+      "size": "M",
+      "priority": 1,
+      "phase": 2,
+      "deps": ["cloud-abstraction-traits", "localstack-dev-env"],
+      "labels": ["cloud-abstraction", "aws", "rust"]
+    },
+    {
+      "slug": "cloud-aws-ddb-kv",
+      "title": "cloud-aws: DynamoDB ReplicatedKv implementation",
+      "description": "## Goal\nImplement `ReplicatedKv` over `aws-sdk-dynamodb` in `cloud-aws/src/ddb_replicated_kv.rs` (§9.3), providing the conditional and transactional writes the lease/epoch protocol and write-path linearization require (§9.5).\n\n## Acceptance Criteria\n- `Condition` DTOs translated to DynamoDB `ConditionExpression`s; `ConditionalCheckFailedException` maps to `ConditionFailed` (never a panic or opaque error)\n- `atomic_update` → `UpdateItem` with `UpdateExpression`; returns the updated `Item`\n- `transact` → `TransactWriteItems`, all-or-nothing including per-op conditions\n- `query` → prefix query against the table key schema; pagination handled\n- Item/Value serialization to and from DynamoDB `AttributeValue` covered by round-trip tests\n- Integration tests gated `--features integration`, green against LocalStack DynamoDB (§19.1)\n\n## Out of Scope\n- Global Tables replication semantics and multi-region simulation (multi-region epic); DDB table schema for batches/leases (storage-facade epic, §8.2); shared-suite CI wiring (cloud-aws-conformance)\n\n## Testing\n- Unit (§19.1): expression translation + AttributeValue round-trips\n- Integration (§19.1): conditional write, atomic update, transact tests vs LocalStack\n\n## Demo\n`docker compose up -d localstack && cargo test -p cloud-aws --features integration` shows DDB KV tests passing.",
+      "size": "M",
+      "priority": 1,
+      "phase": 2,
+      "deps": ["aws-backend"],
+      "labels": ["cloud-abstraction", "aws", "rust"]
+    },
+    {
+      "slug": "cloud-localstack",
+      "title": "cloud-localstack helper crate: endpoint-configured AWS backends for dev/test",
+      "description": "## Goal\nCreate `crates/cloud-localstack` — thin wrappers that configure the `cloud-aws` implementations with LocalStack endpoints, credentials, and path-style addressing (§9.3), so dev and test code never hand-rolls SDK endpoint config.\n\n## Acceptance Criteria\n- `cloud_localstack::build(cfg)` returns `cloud-aws` ObjectStore/ObjectLock/ReplicatedKv instances pointed at LocalStack (§9.4 `Provider::Localstack` target)\n- Endpoint resolution: explicit config first, then `LOCALSTACK_ENDPOINT`-style env fallback with sane compose defaults (§18.1)\n- Dummy-credential and path-style-addressing quirks handled here, not by callers\n- Helper used by `cloud-aws` integration tests to construct clients (replacing ad-hoc config)\n- Rustdoc quickstart: two-line example constructing a LocalStack-backed store\n\n## Out of Scope\n- The docker-compose LocalStack environment itself (foundation-infra localstack-dev-env); Backend factory wiring (cloud-backend-factory-aws); multi-region multi-instance LocalStack simulation (multi-region epic, §18.3)\n\n## Testing\n- Unit (§19.1): config/endpoint resolution logic\n- Integration (§19.1): smoke test constructing each client and performing one round-trip vs LocalStack, gated `--features integration`\n\n## Demo\n`docker compose up -d localstack && cargo test -p cloud-localstack --features integration` green.",
+      "size": "S",
+      "priority": 1,
+      "phase": 2,
+      "deps": ["cloud-aws-ddb-kv"],
+      "labels": ["cloud-abstraction", "aws", "dev-experience"]
+    },
+    {
+      "slug": "cloud-aws-conformance",
+      "title": "Run shared conformance suites against cloud-aws via LocalStack in CI",
+      "description": "## Goal\nWire the shared `cloud-test-suite` suites (ObjectStore, ObjectLock, ReplicatedKv) against the `cloud-aws` backend through `cloud-localstack`, per the §9.7 pattern, and run them in a CI integration lane — guaranteeing behavioral consistency between memory and AWS backends.\n\n## Acceptance Criteria\n- `cloud-aws/tests/` invokes `run_object_store_suite`, `run_object_lock_suite`, and `run_replicated_kv_suite` with factories built via `cloud-localstack` (§9.7)\n- All suites green against LocalStack, gated `--features integration` (§19.1)\n- CI gains an integration job with a LocalStack service container running these suites on every PR touching cloud crates\n- Any genuine behavioral divergence (e.g., LocalStack Object Lock gaps) is either fixed in the backend or skipped via `#[ignore = \"reason\"]` carrying a tracking-ticket reference — shared suites are never edited to accommodate one backend\n\n## Out of Scope\n- Hsm suite vs SoftHSM (cloud-softhsm-conformance); chaos/failure-injection scenarios (testing-infrastructure epic, §19.9); performance benchmarks (§19.11)\n\n## Testing\n- Integration (§19.1): this ticket IS the integration coverage; reuses unit-proven suites\n\n## Demo\nCI run shows the `cloud-integration` job green; locally `docker compose up -d localstack && cargo test -p cloud-aws --features integration` runs the identical suites.",
+      "size": "S",
+      "priority": 1,
+      "phase": 2,
+      "deps": ["cloud-localstack", "cloud-test-suite-object", "cloud-test-suite-kv", "ci-pipeline"],
+      "labels": ["cloud-abstraction", "testing", "ci"]
+    },
+    {
+      "slug": "softhsm-backend",
+      "title": "cloud-softhsm: PKCS#11 Hsm implementation against SoftHSM2",
+      "description": "## Goal\nCreate `crates/cloud-softhsm` implementing the `Hsm` trait over PKCS#11 (via `cryptoki`) against SoftHSM2 — the dev-mode stand-in for CloudHSM (§9.3, §14, §18.1).\n\n## Acceptance Criteria\n- `generate_key` creates an ECDSA P-256 keypair (v1 algorithm, §14.1) and returns a stable `KeyHandle` (token label/ID based)\n- `get_public_key` exports SPKI DER; `sign` produces a signature that verifies with a RustCrypto `p256` verifier; signature encoding choice documented for checkpoint-signer consumers\n- Slot/token/PIN configuration via config struct with env fallback; token bootstrap script (init token + PIN) usable by both tests and `make demo` (§18.1)\n- `is_fips_validated() == false` — dev-only, explicitly non-FIPS (§14.4)\n- Concurrent signing: integration test spawns 8 tokio tasks signing in parallel; all signatures verify and no PKCS#11 `CKR_*` errors occur (sessions pooled or per-operation, never shared across threads)\n- Integration tests gated `--features integration`, green with SoftHSM2 installed\n\n## Out of Scope\n- CloudHSM wiring (cloud-aws-cloudhsm); cross-region key replication ceremony (multi-region epic, §14.2); checkpoint signer component (ca-service epic); ML-DSA keys (v2)\n\n## Testing\n- Unit (§19.1): config parsing, handle encoding, error mapping (mock-free logic only)\n- Integration (§19.1): sign/verify round-trip vs SoftHSM2; latency smoke assertion far under the 100ms p99 target (§14.3)\n\n## Demo\n`./scripts/softhsm-init.sh && cargo test -p cloud-softhsm --features integration` green.",
+      "size": "M",
+      "priority": 1,
+      "phase": 2,
+      "deps": ["cloud-abstraction-traits"],
+      "labels": ["cloud-abstraction", "hsm", "rust"]
+    },
+    {
+      "slug": "cloud-softhsm-conformance",
+      "title": "Run shared Hsm suite against SoftHSM2 in CI",
+      "description": "## Goal\nWire `run_hsm_suite` from `cloud-test-suite` against `cloud-softhsm` (§9.7) and run it in the CI integration lane, proving the PKCS#11 backend behaves identically to `MemoryHsm`.\n\n## Acceptance Criteria\n- `cloud-softhsm/tests/` invokes `run_hsm_suite` with a factory that provisions a fresh SoftHSM2 token per run (§9.7 pattern), gated `--features integration` (§19.1)\n- CI integration job installs/initializes SoftHSM2 (reusing the softhsm-backend bootstrap script) and runs the suite on every PR touching HSM crates\n- Suite invoked with `expected_fips == false` for SoftHSM (§14.4)\n- Token setup/teardown leaves no state between test runs (idempotent re-runs)\n\n## Out of Scope\n- New suite cases (extend cloud-test-suite-hsm instead); CloudHSM validation (cloud-aws-cloudhsm, untestable without spend per §1); checkpoint-signer E2E (ca-service epic)\n\n## Testing\n- Integration (§19.1): this ticket is the SoftHSM integration coverage, reusing the unit-proven shared suite\n\n## Demo\nCI shows the HSM integration job green; locally `./scripts/softhsm-init.sh && cargo test -p cloud-softhsm --features integration` runs the shared suite.",
+      "size": "S",
+      "priority": 1,
+      "phase": 2,
+      "deps": ["softhsm-backend", "cloud-test-suite-hsm", "ci-pipeline"],
+      "labels": ["cloud-abstraction", "hsm", "testing", "ci"]
+    },
+    {
+      "slug": "cloud-backend-factory",
+      "title": "Backend struct and build_backend factory with Memory provider",
+      "description": "## Goal\nImplement the §9.4 `Backend` factory: the struct of four `Arc<dyn Trait>` handles plus `build_backend(BackendConfig)` with a `Provider` enum, shipping `Provider::Memory` first so downstream CA-service work can start immediately against a fully wired backend.\n\n## Acceptance Criteria\n- `Backend { object_store, object_lock, replicated_kv, hsm }` as `Arc<dyn ...>` fields exactly per §9.4\n- `Provider` enum with `Memory`, `Aws`, `Localstack` variants (§9.4); non-memory variants return a clear `Unimplemented` error until cloud-backend-factory-aws lands\n- `build_backend` returns a working all-memory `Backend`; consumers depend only on `cloud-types` + factory, never name a concrete backend (§9.3, §9.4)\n- Cargo features gate backend crate dependencies so memory-only consumers do not compile the AWS SDK (§9.3 \"wired via Cargo features\")\n- `BackendConfig` deserializes from config file/env (serde); unknown provider strings rejected with actionable error\n- Doc example shows a service constructor taking `Arc<Backend>` (§9.4 `CaService::new` shape)\n\n## Out of Scope\n- Aws/Localstack/SoftHSM wiring (cloud-backend-factory-aws); GCP/Azure/on-prem variants (multi-cloud epic, §27); storage facade construction (storage-facade epic)\n\n## Testing\n- Unit (§19.1): config deserialization, memory build round-trip (put/get through `Backend`), feature-flag compile checks in CI matrix\n\n## Demo\n`cargo test -p cloud-backend` green with no Docker; doc example compiles via doctest.",
+      "size": "S",
+      "priority": 1,
+      "phase": 2,
+      "deps": ["memory-backend"],
+      "labels": ["cloud-abstraction", "rust", "critical-path"]
+    },
+    {
+      "slug": "cloud-backend-factory-aws",
+      "title": "Wire Aws and Localstack providers into build_backend",
+      "description": "## Goal\nComplete the §9.4 factory: `Provider::Aws` → `cloud_aws::build`, `Provider::Localstack` → `cloud_localstack::build`, with SoftHSM wired as the HSM for dev/Localstack profiles so a full four-trait `Backend` is buildable outside memory mode.\n\n## Acceptance Criteria\n- `build_backend` with `Provider::Localstack` returns a `Backend` backed by LocalStack S3/DDB via `cloud-localstack` and SoftHSM for `hsm` (§14: SoftHSM in dev)\n- `Provider::Aws` path implemented and feature-gated; HSM slot documented as CloudHSM-pending (no real AWS spend, §1) with config validation only\n- Backend crates remain feature-gated: memory-only builds compile without AWS SDK or PKCS#11 deps (§9.3)\n- `BackendConfig` gains `aws`/`localstack` sections matching §9.4's `cfg.aws`/`cfg.localstack`\n- Integration smoke test: `build_backend(localstack cfg)` then one put/get and one HSM sign through the `Backend` handles\n\n## Out of Scope\n- CloudHSM implementation (cloud-aws-cloudhsm); GCP/Azure/on-prem providers (multi-cloud epic); dev-env compose orchestration (foundation-infra)\n\n## Testing\n- Unit (§19.1): provider dispatch + config validation\n- Integration (§19.1): LocalStack+SoftHSM smoke test gated `--features integration`\n\n## Demo\n`docker compose up -d localstack && ./scripts/softhsm-init.sh && cargo test -p cloud-backend --features integration` builds a live `Backend` and round-trips all four capabilities.",
+      "size": "S",
+      "priority": 2,
+      "phase": 2,
+      "deps": ["cloud-backend-factory", "cloud-localstack", "softhsm-backend"],
+      "labels": ["cloud-abstraction", "aws", "rust"]
+    },
+    {
+      "slug": "cloud-aws-cloudhsm",
+      "title": "cloud-aws: CloudHSM Hsm implementation via PKCS#11 (config-validated, no cloud spend)",
+      "description": "## Goal\nAdd `cloudhsm.rs` to `cloud-aws` (§9.3): an `Hsm` implementation reusing the PKCS#11 core from `cloud-softhsm`, configured for the CloudHSM client library — keeping the v1 production design honest (§14) without violating the no-AWS-spend constraint (§1).\n\n## Acceptance Criteria\n- `CloudHsm` implements `Hsm` by delegating to the shared PKCS#11 session layer with CloudHSM-specific module path, cluster cert, and CU credential config (§14.2 Option A context documented)\n- `is_fips_validated() == true` for this backend, per §14.4 (FIPS comes from the HSM itself); rustdoc states validation is inherited from hardware, not the binary\n- Config validation unit-tested: missing cluster cert / bad module path produce typed errors\n- Crate compiles and passes `cargo clippy` with the feature enabled; explicitly marked untested-against-real-hardware in rustdoc and README (§1 non-goals: no production deployment)\n- SoftHSM-backed test exercises the shared PKCS#11 code path this impl delegates to\n\n## Out of Scope\n- Real CloudHSM cluster provisioning or CDK for HSM (no spend, §1); cross-region key replication ceremony (multi-region epic, §14.2); FIPS CI release gates (§14.4, foundation-infra/ca-service hardening)\n\n## Testing\n- Unit (§19.1): config validation, module resolution; shared-path coverage via SoftHSM integration tests\n\n## Demo\n`cargo build -p cloud-aws --features cloudhsm && cargo test -p cloud-aws cloudhsm` shows config-validation tests green.",
+      "size": "S",
+      "priority": 3,
+      "phase": 2,
+      "deps": ["aws-backend", "softhsm-backend"],
+      "labels": ["cloud-abstraction", "hsm", "aws", "post-v1-adjacent"]
+    },
+    {
+      "slug": "cloud-backend-guide",
+      "title": "Document capability bar and how-to-add-a-backend guide",
+      "description": "## Goal\nWrite the cloud-abstraction documentation the spec assigns this layer: the capability requirements table (§9.5), what is deliberately NOT abstracted and why (§9.2), and a step-by-step guide for adding a new backend validated by the shared suites (§9.7) — the on-ramp for post-v1 GCP/Azure/on-prem work (§27 pointer only).\n\n## Acceptance Criteria\n- `docs/cloud-backends.md` (linked from README/AGENTS.md) containing: the §9.5 capability table with required behaviors and rationale; the §9.2 abstraction boundary principle (\"abstract inside the service binary, not the deployment topology\"); honest cost accounting summary (§9.8)\n- \"Adding a backend\" walkthrough: implement the four traits, pass every `cloud-test-suite` suite, wire the `Backend` factory + Cargo feature — with `cloud-memory` as the worked example\n- Crate-level rustdoc for `cloud-types` links to this doc; `cargo doc` renders without warnings\n- Statement that a backend lacking any §9.5 capability \"isn't a fit\" — abstractions do not paper over missing capabilities\n\n## Out of Scope\n- Actual GCP/Azure/on-prem implementations (multi-cloud epic); storage facade docs (storage-facade epic); runbooks (§21, observability/ops epics)\n\n## Testing\n- Doc build check (`cargo doc` warning-free) and link check in CI docs lane; doctest for any embedded code snippets (§19.1 unit)\n\n## Demo\nOpen `docs/cloud-backends.md` in the repo; `cargo doc -p cloud-types --open` shows the linked guide.",
+      "size": "S",
+      "priority": 2,
+      "phase": 2,
+      "deps": ["cloud-test-suite-object", "cloud-backend-factory"],
+      "labels": ["cloud-abstraction", "docs", "dev-experience"]
+    }
+  ]
+}

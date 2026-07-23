@@ -1,0 +1,288 @@
+{
+ "epic": {
+  "slug": "agent-harnessing",
+  "title": "Agent Harnessing",
+  "description": "Agent Harnessing builds the repo's agent-first development scaffolding per spec §23: seeded `.claude/skills/` and `.claude/rules/`, the AGENTS.md entry-point guide, inner-loop make targets (agent-precheck, watch, verify-task, WORKING_SET.md), and outer-loop tooling (decision journal, Beads-journal integration, ADRs, pattern/anti-pattern library). It also ships the scaling-beyond-context-window aids — CODEMAP generation, hierarchical READMEs, search affordances, living Mermaid diagrams, and `make agent-context` — plus the §23.8 context-budget patterns as repo docs, so autonomous agents can navigate and extend this system without eroding its invariants (§23 thesis). CI enforcement of these local lint/check targets is owned by foundation-infra; the Beads board itself is already initialized."
+ },
+ "tickets": [
+  {
+   "slug": "agent-journal-tooling",
+   "title": "Seed docs/journal.md decision journal with make journal append tooling",
+   "description": "## Goal\nEstablish the decision journal per §23.5/§23.7: `docs/journal.md` plus `make journal` append tooling and documented conventions.\n\n## Acceptance Criteria\n- `docs/journal.md` seeded with the §23.7 entry template (ticket, PR, decisions, rejected alternatives, open questions) and one initial real entry\n- `make journal msg=\"...\"` appends a timestamped entry; handles quoting and multiline text safely\n- Conventions documented in the journal header: when to journal (task completion, non-trivial decisions), entry format, ordering (chosen and stated)\n- Invocation with missing/empty `msg` errors clearly and leaves the file untouched\n\n## Out of Scope\n- Beads auto-append on ticket close (agent-beads-journal-hook)\n- ADRs (agent-adr-scaffold)\n\n## Testing\n- Script smoke tests (§19.13 spirit): append twice, assert ordering and timestamp format; malformed invocation leaves the file unchanged; shellcheck on scripts. No §19.1 code layers apply beyond make-target smoke.\n\n## Demo\n`make journal msg=\"hello from demo\"` then `tail docs/journal.md` shows the new timestamped entry in template form.",
+   "size": "S",
+   "priority": 0,
+   "phase": 0,
+   "deps": [],
+   "labels": [
+    "agent-harnessing",
+    "outer-loop",
+    "docs"
+   ]
+  },
+  {
+   "slug": "agent-inner-loop-targets",
+   "title": "Inner-loop tooling: make agent-precheck, make watch, make verify-task, WORKING_SET.md",
+   "description": "## Goal\nShip the §23.4 inner-loop tooling — `make agent-precheck`, `make watch`, `make verify-task`, and the `WORKING_SET.md` convention — the fast-feedback loop every agent task runs inside.\n\n## Acceptance Criteria\n- PR 1: `make agent-precheck` verifies required tools (Rust toolchain, docker, beads CLI), prints recent `docs/journal.md` entries, runs workspace lint and fast unit tests; non-zero exit on any failure; completes in ~60s on a warm laptop\n- PR 2: `make watch` runs lint+test on save (bacon or cargo-watch) with fast incremental feedback; `make verify-task` runs lint, the fast test suite, and doc/skill/rules lints as the pre-done acceptance gate\n- PR 2: `WORKING_SET.md` template checked in (files touched, decisions made, open questions), working copies gitignored, convention documented\n- Everything runs offline on a laptop (§1 non-goals, §18)\n\n## Out of Scope\n- CI required checks (foundation-infra ci-pipeline)\n- `make agent-context` (agent-context-summary); journal implementation (agent-journal-tooling)\n\n## Testing\n- E2E smoke (§19.13): each target invoked in a clean checkout by a test script; unit tests for nontrivial script logic; shellcheck\n\n## Demo\nOn a fresh clone: `make agent-precheck` prints environment status, recent journal entries, and lint+test results, then `make verify-task` passes.",
+   "size": "M",
+   "priority": 0,
+   "phase": 0,
+   "deps": [
+    "agent-journal-tooling"
+   ],
+   "labels": [
+    "agent-harnessing",
+    "inner-loop",
+    "tooling"
+   ]
+  },
+  {
+   "slug": "agent-agents-md-guide",
+   "title": "Seed AGENTS.md top-level agent guide",
+   "description": "## Goal\nCreate the repo-root `AGENTS.md` per §23.3: the starting point every agent reads before any task.\n\n## Acceptance Criteria\n- `AGENTS.md` exists at repo root with the six §23.3 sections: repository tour, how to start a task (precheck, branch, test, journal), standard patterns, where to find what, common commands, gotchas\n- Repository tour reflects the actual Cargo workspace crate layout and points to subsystem READMEs and `CODEMAP.md`\n- \"How to start a task\" documents `make agent-precheck`, `make watch`, `make verify-task`, `make journal msg=...`, and the `WORKING_SET.md` convention (§23.4–23.5)\n- Documents the strict-module-privacy navigation convention (a crate's `lib.rs` is the surface to learn deeply) and the spec-by-test convention (grep test names for behavior; E2E tests authored as shell scripts driving `mtcctl`) per §23.6/§19.13\n- Links to `.claude/rules/`, `.claude/skills/`, `docs/journal.md`, `docs/adr/`, `docs/patterns/`\n- Markdown lint passes; all intra-repo links resolve\n\n## Out of Scope\n- The make targets themselves (agent-inner-loop-targets)\n- Subsystem READMEs (agent-readme-hierarchy); CODEMAP generation (agent-codemap-generator)\n\n## Testing\n- No §19.1 code layers apply; validated by markdown lint and a local link-check make target\n\n## Demo\nOpen `AGENTS.md` and follow its \"start a task\" steps verbatim on a clean checkout — every referenced command succeeds.",
+   "size": "S",
+   "priority": 1,
+   "phase": 0,
+   "deps": [
+    "cargo-workspace",
+    "agent-inner-loop-targets"
+   ],
+   "labels": [
+    "agent-harnessing",
+    "docs"
+   ]
+  },
+  {
+   "slug": "agent-claude-rules-seed",
+   "title": "Seed .claude/rules/ with the sixteen §23.2 repo rules",
+   "description": "## Goal\nSeed `.claude/rules/` with the sixteen repo-specific rules listed in §23.2 so agents inherit the project's guardrails from day one.\n\n## Acceptance Criteria\n- PR 1 (code discipline): `always-test-with-pr`, `no-systemtime-now-in-prod`, `no-unwrap-in-prod`, `no-unsafe`, `use-newtypes`, `thiserror-for-libs-eyre-for-bins`, `no-sdk-types-in-domain`, `prefer-generics-on-hot-paths` — each citing its §22 subsection\n- PR 2 (workflow): `fips-boundary-preserved`, `cli-ui-parity`, `document-decisions`, `run-precheck-first`, `update-codemap-on-structure-change`, `single-pr-acceptance`, `kani-for-critical-paths`, `spec-pin-and-track`\n- Each rule file states: the rule, rationale, one compliant and one non-compliant example, and how it is enforced (lint, CI gate, or review)\n- Rules referencing commands (`make agent-precheck`, `make codemap`) use the spec-defined target names (§23.4, §23.6) so they stay valid even if seeded before those targets land\n\n## Out of Scope\n- Clippy/CI enforcement of the rules (foundation-infra ci-pipeline)\n- Skills and AGENTS.md (separate tickets)\n\n## Testing\n- No §19.1 code layers; markdown lint plus a `make rules-lint` check that every rule file has the required headings\n\n## Demo\n`ls .claude/rules/` shows all 16 rules; open any file and see rule/rationale/examples/enforcement sections.",
+   "size": "M",
+   "priority": 1,
+   "phase": 0,
+   "deps": [],
+   "labels": [
+    "agent-harnessing",
+    "rules",
+    "docs"
+   ]
+  },
+  {
+   "slug": "agent-skills-scaffold",
+   "title": "Scaffold .claude/skills/ framework: template, authoring guide, skill-lint",
+   "description": "## Goal\nCreate the `.claude/skills/` framework per §23.1 — directory, authoring template, and local validation — so subsystem skills can be seeded as their subject code lands.\n\n## Acceptance Criteria\n- `.claude/skills/README.md` documents purpose and the required skill structure: Goal, Files involved (3–5 pointers), Pattern, Common pitfalls (§23.1)\n- `_template.md` skill template checked in\n- `make skill-lint` validates every skill file has the required sections and that \"Files involved\" paths exist; fails loudly on violations\n- Skill-driven scoping (~5 files per skill) documented as a context-budget pattern (§23.8)\n\n## Out of Scope\n- The eight §23.1 subsystem skills themselves (seeded by later tickets as their subject code lands)\n- CI wiring of skill-lint (foundation-infra ci-pipeline)\n\n## Testing\n- Script smoke (§19.13 spirit): skill-lint passes on the template, fails on a fixture missing a required section and on a dangling file path; shellcheck\n\n## Demo\n`make skill-lint` passes; copy `_template.md`, delete a section, and watch it fail with a clear message.",
+   "size": "S",
+   "priority": 0,
+   "phase": 0,
+   "deps": [],
+   "labels": [
+    "agent-harnessing",
+    "skills",
+    "tooling"
+   ]
+  },
+  {
+   "slug": "agent-beads-journal-hook",
+   "title": "Beads-journal integration: ticket close auto-appends journal entry",
+   "description": "## Goal\nIntegrate Beads with the decision journal per §23.5: closing a Beads ticket auto-appends a journal entry so future agents inherit context.\n\n## Acceptance Criteria\n- `make done id=<beads-id> msg=\"...\"` (or a native beads hook if the installed version supports one) closes the ticket and appends a journal entry containing ticket ID, title, and message\n- Appended entry follows the §23.7 template skeleton\n- If the ticket close fails, no journal entry is written (no half-applied state)\n- Workflow documented in AGENTS.md's task-completion steps\n\n## Out of Scope\n- Journal file and `make journal` target (agent-journal-tooling)\n- Beads board setup (already initialized)\n\n## Testing\n- Script smoke (§19.13 spirit) against a scratch beads ticket: successful close appends the entry; forced failure leaves `docs/journal.md` untouched; shellcheck\n\n## Demo\nCreate a throwaway beads ticket, run `make done id=... msg=\"demo\"`, show the ticket closed and the journal entry appended.",
+   "size": "S",
+   "priority": 2,
+   "phase": 0,
+   "deps": [
+    "agent-journal-tooling"
+   ],
+   "labels": [
+    "agent-harnessing",
+    "outer-loop",
+    "tooling"
+   ]
+  },
+  {
+   "slug": "agent-adr-scaffold",
+   "title": "Scaffold docs/adr/: template, grep-able index, make adr target",
+   "description": "## Goal\nStand up `docs/adr/` per §23.5–23.6: template, grep-able index, and scaffolding target, so non-trivial decisions are preserved as standalone artifacts.\n\n## Acceptance Criteria\n- `docs/adr/` contains an MADR-style template (context, decision, alternatives considered, consequences)\n- `docs/adr/README.md` index lists all ADRs with one-line summaries — the §23.6 \"ADR index\" agents grep before re-deciding\n- ADR-0001 recorded: adoption of the ADR process itself\n- `make adr title=\"...\"` scaffolds the next-numbered ADR from the template and adds an index row\n- The `document-decisions` rule (§23.2) cross-links here\n\n## Out of Scope\n- Backfilling ADRs for decisions already made in the spec\n- CI freshness check on the index (foundation-infra)\n\n## Testing\n- Script smoke (§19.13 spirit): `make adr` creates a sequentially numbered file and index entry; markdown lint; shellcheck\n\n## Demo\n`make adr title=\"Demo decision\"` then show the new numbered file and the updated index row.",
+   "size": "S",
+   "priority": 1,
+   "phase": 0,
+   "deps": [],
+   "labels": [
+    "agent-harnessing",
+    "outer-loop",
+    "docs"
+   ]
+  },
+  {
+   "slug": "agent-codemap-generator",
+   "title": "Implement make codemap generating CODEMAP.md crate summary",
+   "description": "## Goal\nImplement `make codemap` per §23.6: generate `CODEMAP.md` summarizing every crate's purpose, public API, dependencies, and dependents, giving agents navigation without loading all files.\n\n## Acceptance Criteria\n- PR 1: generator (script or cargo xtask) walks `cargo metadata` and emits per-crate blocks in the §23.6 format (CRATE / PURPOSE / PUBLIC API / DEPENDS ON / USED BY); PURPOSE sourced from Cargo.toml `description`\n- PR 2: PUBLIC API section lists `pub` items exported from each crate's `lib.rs` (top-level surface only, honoring §23.6 strict module privacy)\n- `CODEMAP.md` checked into the repo; `make codemap-check` fails when regeneration would change the committed file\n- Deterministic, stably ordered output so diffs are meaningful\n\n## Out of Scope\n- CI enforcement of codemap freshness (foundation-infra ci-pipeline)\n- Non-Rust artifacts (CDK app) — later enhancement\n\n## Testing\n- Unit tests for the generator against a small fixture workspace; E2E smoke (§19.13): run against the real workspace and assert format and determinism\n\n## Demo\n`make codemap && git diff --exit-code CODEMAP.md`, then open CODEMAP.md and jump from a crate entry to its `lib.rs` API.",
+   "size": "M",
+   "priority": 1,
+   "phase": 0,
+   "deps": [
+    "cargo-workspace"
+   ],
+   "labels": [
+    "agent-harnessing",
+    "navigation",
+    "tooling"
+   ]
+  },
+  {
+   "slug": "agent-search-affordances",
+   "title": "Pre-built search targets: find-tests, find-callers, find-impl, find-todo",
+   "description": "## Goal\nShip the §23.6 pre-built search affordances so agents locate tests, callers, implementations, and TODOs without burning tokens reading files.\n\n## Acceptance Criteria\n- `make find-tests path=X` lists test files/functions relevant to a path\n- `make find-callers symbol=Y` lists call sites; `make find-impl iface=Z` lists trait implementations\n- `make find-todo` lists TODO/FIXME comments with `file:line`\n- All targets are ripgrep-based, run offline, and emit `file:line`-prefixed output agents can consume directly\n- Documented in AGENTS.md's \"where to find what\" section (follow-up edit)\n\n## Out of Scope\n- Semantic/LSP-accurate indexing — rg heuristics are acceptable at this repo size\n\n## Testing\n- Script smoke (§19.13 spirit): each target run against known workspace symbols returns the expected hits; empty-result and missing-arg cases exit cleanly; shellcheck\n\n## Demo\n`make find-impl iface=<any workspace trait>` prints each implementation location; `make find-todo` lists open TODOs.",
+   "size": "S",
+   "priority": 2,
+   "phase": 0,
+   "deps": [],
+   "labels": [
+    "agent-harnessing",
+    "navigation",
+    "tooling"
+   ]
+  },
+  {
+   "slug": "agent-context-summary",
+   "title": "make agent-context token-budgeted summary plus context-budget docs",
+   "description": "## Goal\nImplement `make agent-context` and document the context-budget patterns per §23.8, giving agents a bounded orientation snapshot when relevant context exceeds the window.\n\n## Acceptance Criteria\n- PR 1: `make agent-context` prints a budget-bounded summary: current branch + dirty files, last N `docs/journal.md` entries, open Beads issues (via `bd` CLI), and last test results when cached\n- Output stays within a configurable line/char budget even with a large journal or board (truncates with explicit markers)\n- Runs offline; degrades gracefully when journal or beads data is absent\n- PR 2: `docs/context-budget.md` documents the four §23.8 strategies — skill-driven scoping, `make agent-context`, Beads ticket file-scoping, scoped test runs — with concrete command examples; AGENTS.md links to it\n\n## Out of Scope\n- `make agent-precheck` (agent-inner-loop-targets)\n- Exact token counting — line/char budget approximation is sufficient\n\n## Testing\n- Script smoke (§19.13 spirit): budget enforcement against an oversized fixture journal; E2E: run in the repo and assert all sections present; shellcheck\n\n## Demo\n`make agent-context` prints branch, dirty files, recent journal entries, and open beads within the stated budget.",
+   "size": "M",
+   "priority": 2,
+   "phase": 0,
+   "deps": [
+    "agent-journal-tooling"
+   ],
+   "labels": [
+    "agent-harnessing",
+    "context-budget",
+    "tooling"
+   ]
+  },
+  {
+   "slug": "agent-readme-hierarchy",
+   "title": "Hierarchical README convention: template plus per-crate READMEs",
+   "description": "## Goal\nEstablish the hierarchical README convention per §23.6: root README points at subsystem READMEs; each crate README states purpose, public API, internal structure, and gotchas — cheap context before agents dive into code.\n\n## Acceptance Criteria\n- Subsystem README template checked in with the four §23.6 sections (purpose / public API / internal structure / gotchas)\n- Every existing crate gains a README following the template\n- Root README gains a subsystem map linking to each crate README\n- Convention documented so new-crate checklists (rules/AGENTS.md) require a README\n- A make target lints README presence for every crate and fails if one is missing\n\n## Out of Scope\n- `CODEMAP.md` generated navigation (agent-codemap-generator)\n- READMEs for non-crate directories (cdk/, docs/) — follow-up\n\n## Testing\n- Script smoke (§19.13 spirit): README-presence lint passes on the workspace and fails against a fixture crate without one; markdown lint\n\n## Demo\nFrom the root README, click through to any crate README and see the four template sections filled in.",
+   "size": "S",
+   "priority": 2,
+   "phase": 0,
+   "deps": [
+    "cargo-workspace"
+   ],
+   "labels": [
+    "agent-harnessing",
+    "navigation",
+    "docs"
+   ]
+  },
+  {
+   "slug": "agent-architecture-diagrams",
+   "title": "Seed docs/architecture/ living Mermaid diagrams",
+   "description": "## Goal\nSeed `docs/architecture/` with living Mermaid diagrams per §23.6 so agents get GitHub-rendered visual system context without reading the full spec.\n\n## Acceptance Criteria\n- At least three Mermaid diagrams derived from the spec: system overview (components and data flow), write-path sequence (intake → batch builder → tree updater → checkpoint signer), multi-region active-passive topology\n- Diagrams render on GitHub (valid Mermaid, no external assets)\n- Each diagram page states its source-of-truth spec section and when it must be updated\n- `make diagrams-check` validates Mermaid syntax locally (offline-capable after first tool install)\n\n## Out of Scope\n- CI drift detection between diagrams and code (foundation-infra ci-pipeline)\n- Auto-generation of diagrams from code\n\n## Testing\n- E2E smoke (§19.13 spirit): `make diagrams-check` passes on the seeded diagrams and fails on a fixture with broken Mermaid syntax\n\n## Demo\nOpen `docs/architecture/` on GitHub (or a local Mermaid preview) and view the rendered system-overview diagram.",
+   "size": "S",
+   "priority": 2,
+   "phase": 0,
+   "deps": [],
+   "labels": [
+    "agent-harnessing",
+    "docs",
+    "architecture"
+   ]
+  },
+  {
+   "slug": "agent-pattern-library",
+   "title": "Seed docs/patterns/ pattern library and docs/anti-patterns.md",
+   "description": "## Goal\nSeed the pattern library (`docs/patterns/`) and anti-patterns doc (`docs/anti-patterns.md`) per §23.5 so agents reference canonical patterns instead of pattern-matching to arbitrary code.\n\n## Acceptance Criteria\n- PR 1: `docs/patterns/` with a pattern template plus at least three seeded patterns referencing real merged code: newtype construction/validation (§22.2), injected `Clock` usage, thiserror-for-libs / eyre-for-bins error discipline (§22, §23.2)\n- Each pattern lists: intent, path-referenced example, when to use, pitfalls\n- PR 2: `docs/anti-patterns.md` seeded with at least six entries (`SystemTime::now()` in prod code, `unwrap()` outside tests, SDK types in domain signatures, type aliases for identifiers, swallowed errors, `Arc<dyn Trait>` on hot paths), each with a \"do this instead\" pointer\n- Cited file paths verified by a path-existence lint (same mechanism as skill-lint)\n\n## Out of Scope\n- Task-oriented skills (`.claude/skills/`); rule text (agent-claude-rules-seed)\n\n## Testing\n- No §19.1 code layers; markdown lint plus path-existence check for all cited examples\n\n## Demo\nOpen `docs/patterns/` and the newtype pattern; every cited path resolves to real code in the workspace.",
+   "size": "M",
+   "priority": 2,
+   "phase": 1,
+   "deps": [
+    "core-mtc-types"
+   ],
+   "labels": [
+    "agent-harnessing",
+    "outer-loop",
+    "docs"
+   ]
+  },
+  {
+   "slug": "agent-skills-conformance-seed",
+   "title": "Seed skills: add-fixture.md and update-spec-version.md",
+   "description": "## Goal\nSeed the two conformance-lifecycle skills from §23.1: `add-fixture.md` (capture and document a test fixture) and `update-spec-version.md` (track a new MTC draft revision).\n\n## Acceptance Criteria\n- PR 1: `add-fixture.md` — Goal, the 3–5 files involved in the conformance/test-vector suite, the capture-and-document pattern, common pitfalls (undocumented provenance, fixtures not tied to a draft revision)\n- PR 2: `update-spec-version.md` — steps to bump the pinned draft revision, rerun conformance and differential suites, and file Beads tickets for non-trivial divergences per the `spec-pin-and-track` rule (§23.2)\n- Both pass `make skill-lint` (required sections, existing file paths)\n- Each skill fits the ~5-file scoping budget (§23.8)\n\n## Out of Scope\n- The conformance/differential suites themselves (testing-infrastructure epic)\n- Rule text for spec-pin-and-track (agent-claude-rules-seed)\n\n## Testing\n- `make skill-lint`; a manual dry-run of each skill's steps recorded in the PR description (§19.13 spirit)\n\n## Demo\nFollow `add-fixture.md` to add a scratch fixture end-to-end, run the suite, then revert.",
+   "size": "M",
+   "priority": 2,
+   "phase": 1,
+   "deps": [
+    "agent-skills-scaffold",
+    "EXTERNAL:spec conformance suite scaffolding (testing-infrastructure epic)"
+   ],
+   "labels": [
+    "agent-harnessing",
+    "skills"
+   ]
+  },
+  {
+   "slug": "agent-skill-add-storage-method",
+   "title": "Seed skill: add-storage-method.md",
+   "description": "## Goal\nSeed `.claude/skills/add-storage-method.md` per §23.1: how to extend the Storage interface with a new operation across all backends.\n\n## Acceptance Criteria\n- Skill has Goal, Files involved (trait definition, memory backend, AWS backend, shared cloud-test-suite, storage facade — 3–5 pointers), Pattern (worked example from an actually merged method), Common pitfalls\n- Pitfalls cover: implementing in one backend only, skipping the shared test suite, leaking vendor SDK types across the boundary (§22.8)\n- States the requirement that the shared test suite runs the new method against every backend (§24 Phase 2)\n- Passes `make skill-lint`\n\n## Out of Scope\n- Any storage code changes; the add-admin-endpoint skill (separate ticket)\n\n## Testing\n- `make skill-lint`; skill validated by tracing an existing storage method through every listed file, noted in the PR (§19.13 spirit)\n\n## Demo\nOpen the skill and confirm each \"Files involved\" path resolves to real code across trait, backends, and test suite.",
+   "size": "S",
+   "priority": 2,
+   "phase": 2,
+   "deps": [
+    "agent-skills-scaffold",
+    "storage-facade-core"
+   ],
+   "labels": [
+    "agent-harnessing",
+    "skills"
+   ]
+  },
+  {
+   "slug": "agent-skill-add-admin-endpoint",
+   "title": "Seed skill: add-admin-endpoint.md (OpenAPI to server to CLI to UI)",
+   "description": "## Goal\nSeed `.claude/skills/add-admin-endpoint.md` per §23.1: add an admin operation end-to-end — OpenAPI → server → CLI → UI → test.\n\n## Acceptance Criteria\n- Skill covers the full flow: edit the OpenAPI spec, regenerate code, implement the axum route, add the CLI command, add the UI affordance, add tests at each layer\n- \"Files involved\" lists the 3–5 canonical files for each step\n- Common pitfalls include violating CLI/UI parity (§23.2 `cli-ui-parity`) and hand-editing generated code\n- Passes `make skill-lint`\n\n## Out of Scope\n- Any admin feature work; changes to the OpenAPI codegen pipeline itself\n\n## Testing\n- `make skill-lint`; skill validated by using it to trace an existing admin endpoint end-to-end, noted in the PR (§19.13 spirit)\n\n## Demo\nFollow the skill to locate every layer (spec, generated code, route, CLI, UI, tests) of an existing admin operation.",
+   "size": "S",
+   "priority": 2,
+   "phase": 3,
+   "deps": [
+    "agent-skills-scaffold",
+    "admin-api-core",
+    "EXTERNAL:admin CLI and UI scaffolding (admin-surface epic)"
+   ],
+   "labels": [
+    "agent-harnessing",
+    "skills"
+   ]
+  },
+  {
+   "slug": "agent-skills-ops-seed",
+   "title": "Seed operational skills: add-metric.md, write-runbook.md, add-chaos-test.md",
+   "description": "## Goal\nSeed the three operational skills from §23.1: `add-metric.md` (CloudWatch metric), `write-runbook.md` (runbook template plus alert wiring), and `add-chaos-test.md` (new chaos scenario).\n\n## Acceptance Criteria\n- PR 1: `add-metric.md` — files involved in metric emission and dashboard/alarm wiring, naming conventions, pitfalls (unbounded cardinality, metrics without alarms)\n- PR 2: `write-runbook.md` — runbook template location, alert-to-runbook wiring, expected content structure\n- PR 3: `add-chaos-test.md` — chaos framework files, one merged scenario as the worked pattern, pitfalls (non-deterministic assertions, missing invariant checks)\n- All three pass `make skill-lint` and fit the ~5-file scoping budget (§23.8)\n\n## Out of Scope\n- The metrics, runbook, and chaos frameworks themselves (observability and testing-infrastructure epics)\n\n## Testing\n- `make skill-lint`; each skill dry-run against its framework, recorded in the PR description (§19.13 spirit)\n\n## Demo\nUse `add-chaos-test.md` to scaffold a no-op chaos scenario, run it locally against the dev environment, then revert.",
+   "size": "M",
+   "priority": 2,
+   "phase": 6,
+   "deps": [
+    "agent-skills-scaffold",
+    "EXTERNAL:metrics and runbook conventions (observability epic)",
+    "EXTERNAL:chaos test framework (testing-infrastructure epic)"
+   ],
+   "labels": [
+    "agent-harnessing",
+    "skills"
+   ]
+  },
+  {
+   "slug": "agent-skill-add-adapter",
+   "title": "Seed skill: add-adapter.md for external CA adapters",
+   "description": "## Goal\nSeed `.claude/skills/add-adapter.md` per §23.1: how to add a new external CA adapter behind the `EntryIntake` seam established in v1 (§25.9).\n\n## Acceptance Criteria\n- Skill documents the adapter seam: the `EntryIntake` trait, the ACME adapter as the reference pattern, adapter registration/configuration, and adapter tests\n- \"Files involved\" gives 3–5 pointers including the trait definition and the reference adapter\n- Common pitfalls: bypassing the seam, coupling an adapter to storage internals, vendor types crossing the domain boundary (§22.8)\n- Passes `make skill-lint`\n\n## Out of Scope\n- The adapter SDK and any concrete adapter implementation (adapter-pattern epic, post-v1)\n\n## Testing\n- `make skill-lint`; skill validated by tracing the ACME adapter against the documented pattern, noted in the PR (§19.13 spirit)\n\n## Demo\nOpen the skill; every referenced path resolves, and the ACME adapter matches the documented adapter pattern step for step.",
+   "size": "S",
+   "priority": 3,
+   "phase": 9,
+   "deps": [
+    "agent-skills-scaffold",
+    "entry-intake-trait"
+   ],
+   "labels": [
+    "agent-harnessing",
+    "skills",
+    "post-v1"
+   ]
+  }
+ ]
+}

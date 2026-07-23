@@ -1,0 +1,219 @@
+{
+  "epic": {
+    "slug": "local-dev-experience",
+    "title": "Local Developer Experience",
+    "description": "Everything in spec §18 built on top of the LocalStack dev environment: the 60-second `make demo`, a three-region local simulation with simulated CRR/Global Tables replication plus partition and failover exercises, FakeClock-based time travel, deterministic named fixtures, dual REPLs (evcxr and mtcctl), hot reload, and the self-documenting make target suite. Per §25.7 dev-experience tickets are first-class: this epic is the velocity substrate for every other epic, for both humans and agents, and everything runs on a laptop at zero cloud cost (§1)."
+  },
+  "tickets": [
+    {
+      "slug": "dev-make-skeleton",
+      "title": "Makefile target-suite skeleton with self-documenting help and stub targets",
+      "description": "## Goal\nEstablish the top-level Makefile target suite (§18.8) as the single entry point for all dev workflows: every target from the spec table is declared up front, delegating to `scripts/` or cargo, so later tickets across all epics wire in implementations without restructuring.\n\n## Acceptance Criteria\n- Top-level `Makefile` declares every target in the §18.8 table (`demo`, `demo-multiregion`, `test*`, `repl`, `fixture-load/save`, `time-advance`, `partition-region`, `api-gen`, `codemap`, `agent-context`, `agent-precheck`, `verify-task`, `journal`, `lint`, `fmt`, `audit`, `bench`, `doctor`) plus lifecycle companions `dev`, `demo-down`, `demo-multiregion-down`\n- Implemented targets delegate to `scripts/<name>.sh` or cargo; unimplemented targets print \"not implemented yet — tracked in beads\" and exit non-zero\n- `make help` (default target) self-documents all targets from `##` comments\n- Parameterized targets accept args per spec (`name=X`, `days=N`, `msg=\"...\"`)\n- Conventions documented in `docs/dev-environment.md` so other epics add targets consistently\n\n## Out of Scope\n- Implementations behind any target (owned by follow-on tickets across epics)\n- CI job definitions (§22.13, foundation-infra)\n\n## Testing\n- E2E: shell smoke test in `tests/e2e/make-targets.sh` asserts `make help` lists all §18.8 targets and stubs exit non-zero\n\n## Demo\n`make help` shows the full annotated target catalog; `make demo` prints a friendly not-implemented pointer to its beads ticket.",
+      "size": "S",
+      "priority": 0,
+      "phase": 0,
+      "deps": [],
+      "labels": ["dev-experience", "makefile"]
+    },
+    {
+      "slug": "dev-doctor",
+      "title": "make doctor: dev environment diagnostics with actionable remediation",
+      "description": "## Goal\nImplement `make doctor` (§18.8): diagnose the dev environment and print actionable remediation so onboarding failures are self-explaining instead of mysterious.\n\n## Acceptance Criteria\n- `scripts/doctor.sh` (wired to `make doctor`) checks: Docker daemon reachable, Compose v2 present, required ports free (LocalStack 4566, admin UI 8080), rustc/cargo match `rust-toolchain.toml`, `cargo-watch` and `evcxr_repl` installed, SoftHSM2 library present, LocalStack image pulled, sufficient free disk\n- Each check prints PASS/FAIL/WARN with a one-line copy-pasteable remediation command\n- Exit code 0 only when all hard checks pass; WARN-only exits 0\n- Runs in <10 s; no network calls beyond the local Docker socket\n- Check list is data-driven so later tickets append checks in one place\n\n## Out of Scope\n- Auto-fixing the environment (doctor only diagnoses)\n- CI environment validation (ci-pipeline owns its own images)\n\n## Testing\n- Unit: check functions exercised with stubbed commands (bats/shell harness)\n- E2E: `make doctor` runs green in the CI container\n\n## Demo\nOn a fresh machine run `make doctor` — see failing checks with copy-pasteable fixes; after applying them, all green.",
+      "size": "S",
+      "priority": 1,
+      "phase": 0,
+      "deps": ["dev-make-skeleton"],
+      "labels": ["dev-experience", "onboarding"]
+    },
+    {
+      "slug": "dev-fake-clock",
+      "title": "Clock trait, SystemClock, and thread-safe FakeClock crate",
+      "description": "## Goal\nProvide the injected `Clock` trait, `SystemClock`, and a thread-safe `FakeClock` with controllable advancement (§22.11) — the foundation for time travel (§18.4) and deterministic time-dependent tests across all epics.\n\n## Acceptance Criteria\n- New crate `crates/clock`: `pub trait Clock: Send + Sync { fn now(&self) -> SystemTime; }` plus `SystemClock` and `FakeClock`\n- `FakeClock::advance(Duration)` and `set(SystemTime)`; monotonicity enforced (never goes backward); `Arc<FakeClock>` shareable across threads\n- Optional tokio feature: fake-clock-driven sleep/interval helpers for cadence-based loops\n- Clippy `disallowed-methods` denies `SystemTime::now()`/`Instant::now()` outside `crates/clock` and test code (§22.12, rule `no-systemtime-now-in-prod` §23.2)\n- Docs show the injection pattern (`Arc<dyn Clock>`, §22.7) with a worked example\n\n## Out of Scope\n- Migrating other crates' call sites (adopting epics own that)\n- Admin API control endpoints (`dev-time-advance`)\n\n## Testing\n- Unit: advancement, monotonicity, cross-thread visibility\n- Loom: concurrent advance/now interleavings on FakeClock internals\n- Property: a sequence of advances yields the same final `now()` regardless of interleaving order\n\n## Demo\n`cargo test -p clock`; doc example shows a batch-cadence loop firing instantly under FakeClock instead of waiting wall-clock time.",
+      "size": "S",
+      "priority": 0,
+      "phase": 1,
+      "deps": [],
+      "labels": ["dev-experience", "time-travel"]
+    },
+    {
+      "slug": "dev-repl-evcxr",
+      "title": "make repl: evcxr Rust REPL with workspace crates pre-loaded",
+      "description": "## Goal\nShip `make repl` (§18.6, §18.8): an `evcxr` Rust REPL with workspace crates pre-loaded for ad-hoc human exploration (OQ-10 resolution: evcxr provided; CLI REPL is primary for agents).\n\n## Acceptance Criteria\n- `make repl` verifies/installs `evcxr_repl` and launches it with an init file (`scripts/repl-init.evcxr`)\n- Init pre-loads core workspace crates via `:dep` path dependencies and a prelude importing common types (tree, serialization, clock)\n- Startup banner shows how to build a toy tree and compute an inclusion proof in ~3 lines\n- `scripts/check-repl-init.sh` fails if the init references a crate missing from the workspace (kept honest as crates are added)\n- Documented in `docs/dev-environment.md` with known evcxr limitations\n\n## Out of Scope\n- `mtcctl repl` CLI shell (`dev-repl-cli`)\n- Jupyter kernel setup\n\n## Testing\n- Unit: none (glue)\n- E2E: nightly-lane CI job evaluates the init file headlessly and runs one tree-building snippet\n\n## Demo\n`make repl` → paste the banner snippet → see a Merkle root computed interactively.",
+      "size": "S",
+      "priority": 2,
+      "phase": 1,
+      "deps": ["dev-make-skeleton", "tree-primitives"],
+      "labels": ["dev-experience", "repl"]
+    },
+    {
+      "slug": "dev-synthetic-entry-gen",
+      "title": "Seeded deterministic synthetic entry generator",
+      "description": "## Goal\nA seeded, deterministic synthetic entry generator producing valid MTC assertion/entry inputs for fixtures (§18.5), the demo issuance loop (§18.1), and soak/perf tests — same seed, byte-identical stream, every run, every platform.\n\n## Acceptance Criteria\n- `crates/dev-entrygen`: `EntryGen::new(seed)` yields an infinite iterator of valid entries (domains, keys, claims) using a seeded RNG (e.g. `rand_chacha`)\n- Determinism: same seed produces identical serialized bytes across runs and platforms\n- Generated entries pass domain-type validation and serialization round-trip (§19.2)\n- Supports shaped generation: fixed count, DNS name patterns, key-type mix\n- CLI shim (`cargo run -p dev-entrygen -- --seed 42 --count 1000`) emitting JSONL\n\n## Out of Scope\n- Driving the CA pipeline (fixture generator tickets own that)\n- Malformed/adversarial inputs (fuzzing, §19.3, testing epic)\n\n## Testing\n- Unit: shape parameters honored; count semantics\n- Property: determinism across seeds; every generated entry satisfies `parse(serialize(x)) == x`\n\n## Demo\nRun the CLI shim twice with `--seed 42 --count 3` → byte-identical output; pipe entries into the intake path once it exists.",
+      "size": "S",
+      "priority": 1,
+      "phase": 2,
+      "deps": ["core-mtc-types", "mtc-serialization"],
+      "labels": ["dev-experience", "fixtures"]
+    },
+    {
+      "slug": "dev-fixture-engine",
+      "title": "Fixture snapshot/restore engine for LocalStack S3 and DynamoDB state",
+      "description": "## Goal\nCore fixture snapshot/restore engine (§18.5): capture LocalStack S3 and DynamoDB state as a named, versioned artifact and restore it byte-identically — the substrate for every named fixture and bug-repro workflow.\n\n## Acceptance Criteria\n- `crates/dev-fixture` library + CLI: `fixture save <name>` dumps all S3 buckets (object versions and Object Lock metadata included) and all DDB tables into `fixtures/<name>/` with a manifest (schema version, per-file checksums, created-at, generator provenance)\n- `fixture load <name>` wipes target LocalStack state and restores; idempotent; verifies manifest checksums before applying and aborts on mismatch\n- Round-trip: save → load → save produces identical checksums\n- Clear error naming the schema version on unsupported manifests\n- Payloads stored as compressed tarballs; storage policy (git-lfs vs regenerate-on-demand) documented in `docs/dev-environment.md`\n\n## Out of Scope\n- SoftHSM token capture and `make` wiring (`dev-fixture-targets`)\n- Named fixture content (million-entries etc. — separate tickets per §25.6)\n\n## Testing\n- Unit: manifest serialization, checksum verification\n- Integration: round-trip against LocalStack; S3 versioning + Object Lock metadata survive restore (§19.1)\n\n## Demo\nWrite objects/rows to the local stack, `fixture save scratch`, wipe, `fixture load scratch` → endpoint listings show identical state.",
+      "size": "M",
+      "priority": 1,
+      "phase": 2,
+      "deps": ["localstack-dev-env"],
+      "labels": ["dev-experience", "fixtures"]
+    },
+    {
+      "slug": "dev-fixture-targets",
+      "title": "SoftHSM token capture and make fixture-save/fixture-load wiring",
+      "description": "## Goal\nComplete the fixture workflow (§18.5, §18.8): capture the SoftHSM token directory alongside storage state and wire `make fixture-save name=X` / `make fixture-load name=X`, so a restored fixture is a fully working CA (signing keys included).\n\n## Acceptance Criteria\n- Fixture engine extended to include the SoftHSM token directory in the payload and manifest; restore reinstates it so checkpoint signing works immediately after load\n- `make fixture-save name=X` / `make fixture-load name=X` wired per Makefile conventions; missing `name=` fails with usage help\n- Loading while services run follows a documented safe sequence (quiesce/restart hint printed) rather than silently corrupting state\n- Round-trip: demo state saved, wiped, loaded → `mtcctl status` reports the identical tree head and signing works\n\n## Out of Scope\n- Engine internals for S3/DDB (`dev-fixture-engine`)\n- Multi-region fixture topologies\n\n## Testing\n- Integration: SoftHSM token round-trip; post-restore signing succeeds (§19.1)\n- E2E: `tests/e2e/fixture-roundtrip.sh` save/wipe/load smoke via the make targets (§19.13)\n\n## Demo\nIssue a few certs in the demo env, `make fixture-save name=scratch`, wipe, `make fixture-load name=scratch` → identical state via `mtcctl status`.",
+      "size": "S",
+      "priority": 1,
+      "phase": 2,
+      "deps": ["dev-fixture-engine", "dev-make-skeleton", "softhsm-backend"],
+      "labels": ["dev-experience", "fixtures"]
+    },
+    {
+      "slug": "dev-demo-single-region",
+      "title": "make demo: 60-second single-region demo orchestration with dev-mode profile",
+      "description": "## Goal\nShip the 60-second demo (§18.1): `make demo` brings up LocalStack, SoftHSM2, the CA service in dev mode, and the admin UI from a fresh clone with one command — the flagship promise of §1 and the Phase 3 roadmap exit criterion (§24).\n\n## Acceptance Criteria\n- `make demo` orchestrates: compose bring-up (via localstack-dev-env), SoftHSM token init + key generation, resource provisioning (buckets/tables), CA service launch with dev-mode profile, admin UI reachable at `localhost:8080`\n- Dev-mode profile (`config/dev.toml`): fast batch cadence (seconds), SoftHSM PKCS#11, looser timing — consumed by the CA service's config loading\n- Readiness gating: returns only when health endpoints (§20.5) report ready, with per-component progress output\n- `make demo-down` tears down cleanly; re-running `make demo` is idempotent\n- Warm start (images pulled, workspace built) completes in <60 s on a dev laptop\n- Any component failure names the component and points at `make doctor`\n\n## Out of Scope\n- Auto-issuing ACME loop (`dev-demo-issuance-loop`); self-auditor wiring (`dev-audit-demo-wiring`)\n- FakeClock wiring (`dev-time-advance`); multi-region topology (`dev-multiregion-harness`)\n\n## Testing\n- Integration: provisioning scripts against LocalStack\n- E2E: bring-up/tear-down smoke (formal CI gate lands in `dev-demo-smoke`)\n\n## Demo\n`git clone && make demo` → open `localhost:8080`, watch batches advance; `mtcctl status` shows a live CA.",
+      "size": "M",
+      "priority": 0,
+      "phase": 3,
+      "deps": ["dev-make-skeleton", "localstack-dev-env", "softhsm-backend", "EXTERNAL:runnable CA service dev-mode binary (ca-service epic)", "EXTERNAL:admin UI shell served at localhost:8080 (admin-surface epic)"],
+      "labels": ["dev-experience", "demo"]
+    },
+    {
+      "slug": "dev-demo-issuance-loop",
+      "title": "Sample ACME client auto-issuing certs in a loop for make demo",
+      "description": "## Goal\nComplete the §18.1 demo loop: a sample ACME client that auto-issues certificates continuously so `make demo` shows a living CA (batches filling, tree growing) with zero manual input.\n\n## Acceptance Criteria\n- Demo issuer (sidecar process/container started by `make demo`) drives the ACME endpoint in a loop using seeded names from `dev-entrygen`\n- Rate configurable via the dev profile (default ~1 cert per 2 s); clean shutdown with `make demo-down`\n- Issued certs visible in the admin UI and via `mtcctl cert list` within one dev-mode batch interval\n- `DEMO_ISSUER=off make demo` disables the loop for quiet debugging\n- Loop logs are structured and prefixed so demo output stays readable\n\n## Out of Scope\n- ACME endpoint implementation (ca-service epic)\n- Load/soak-level issuance rates (§19.7, testing epic)\n\n## Testing\n- Unit: rate limiter / backoff logic\n- Integration: one loop iteration issues successfully against the dev stack\n- E2E: demo smoke asserts cert count increases over a 30 s window\n\n## Demo\n`make demo` → admin UI batch view fills with new entries every few seconds without touching anything.",
+      "size": "S",
+      "priority": 1,
+      "phase": 3,
+      "deps": ["dev-demo-single-region", "dev-synthetic-entry-gen", "EXTERNAL:ACME endpoint adapter (ca-service epic)"],
+      "labels": ["dev-experience", "demo"]
+    },
+    {
+      "slug": "dev-demo-smoke",
+      "title": "CI demo smoke test enforcing the 60-second budget",
+      "description": "## Goal\nCI-enforced smoke test and timing budget for the demo (§18.1): prove `make demo` works from a clean checkout and stays fast, so the flagship 60-second promise never rots.\n\n## Acceptance Criteria\n- `tests/e2e/demo-smoke.sh`: runs `make demo`, waits for readiness, asserts admin UI returns 200, `mtcctl status` succeeds, at least one signed checkpoint exists, then `make demo-down` leaves no containers\n- Records wall-clock bring-up time; fails if warm start exceeds 60 s (budget constant defined in one place; cold image pulls excluded from the hard gate)\n- Wired as a required CI job (§22.13) using cached images and a prebuilt workspace\n- On failure, per-component logs dumped as CI artifacts\n- Script passes shellcheck\n\n## Out of Scope\n- Multi-region smoke (`dev-multiregion-harness` ships its own)\n- Full issuance-path E2E scenario suites (§19.13, testing epic)\n\n## Testing\n- E2E: this ticket is the E2E layer for the demo path\n\n## Demo\nCI run shows \"demo-smoke: PASS (42 s)\"; locally `tests/e2e/demo-smoke.sh` gives the same verdict.",
+      "size": "S",
+      "priority": 1,
+      "phase": 3,
+      "deps": ["dev-demo-single-region", "ci-pipeline"],
+      "labels": ["dev-experience", "demo", "ci"]
+    },
+    {
+      "slug": "dev-hot-reload",
+      "title": "make dev: cargo-watch hot reload of the CA service",
+      "description": "## Goal\n`make dev` hot reload (§18.7): `cargo-watch` rebuilds and restarts the CA service on source change while LocalStack/SoftHSM stay up, keeping the edit→observe loop at seconds.\n\n## Acceptance Criteria\n- `make dev` starts (or reuses) the demo infrastructure, then runs the CA service in the foreground under `cargo watch` with debounce\n- Watches `crates/`; ignores `target/`, `fixtures/`, `docs/`\n- Restarted service re-attaches to existing LocalStack state — no re-provisioning; admin UI reflects the restart within one refresh\n- Rebuild-to-serving latency for a one-line change measured by the E2E script and documented in `docs/dev-environment.md` (target: a few seconds in debug mode per §18.7)\n- Works alongside the demo issuance loop (issuer retries through restarts)\n\n## Out of Scope\n- Admin UI asset live-reload (admin-surface epic)\n- Watch-triggered test runs (developers use `cargo watch -x test` ad hoc)\n\n## Testing\n- Unit: none (glue)\n- E2E: script touches a source file, asserts the service process is replaced and health returns ready\n\n## Demo\n`make dev`, edit a log line in the batch builder, save → service restarts in seconds and the new line appears in output.",
+      "size": "S",
+      "priority": 1,
+      "phase": 3,
+      "deps": ["dev-demo-single-region"],
+      "labels": ["dev-experience", "hot-reload"]
+    },
+    {
+      "slug": "dev-time-advance",
+      "title": "Time travel: dev-mode clock admin API and make time-advance",
+      "description": "## Goal\nTime travel (§18.4): dev-mode admin API control of the FakeClock plus `make time-advance days=N`, enabling instant exploration of expiry, batch cadence, and retention behavior without waiting wall-clock time.\n\n## Acceptance Criteria\n- Dev-only admin API routes (enabled only in dev mode): `POST /dev/clock/advance` accepting `{days|hours|seconds}`, `GET /dev/clock` returning simulated now; absent/404 in non-dev builds\n- Dev-mode wiring hands the shared `FakeClock` instance to the CA service's `Arc<dyn Clock>` injection point so cadence loops and validity checks respond immediately to advancement\n- `make time-advance days=N` calls the endpoint and prints old → new simulated time\n- Advancing past certificate validity windows makes them expire, observable via `mtcctl` and the admin UI\n- OpenAPI spec updated for the dev routes (§17.2 codegen pipeline)\n\n## Out of Scope\n- FakeClock primitive (`dev-fake-clock`)\n- Time-triggered pruning/retention flows (pruning epic verifies using this tool)\n\n## Testing\n- Unit: route handlers, dev-mode gating\n- Integration: advancing during a running dev stack shifts the next batch timestamp\n- E2E: `make time-advance days=400` → previously valid cert reported expired (§18.4)\n\n## Demo\n`make demo`, issue a cert, `make time-advance days=400`, `mtcctl cert lookup` shows it expired — under a minute of wall time.",
+      "size": "M",
+      "priority": 1,
+      "phase": 3,
+      "deps": ["dev-fake-clock", "admin-api-core", "dev-demo-single-region", "EXTERNAL:CA service reads time via injected Arc<dyn Clock> (ca-service epic)"],
+      "labels": ["dev-experience", "time-travel"]
+    },
+    {
+      "slug": "dev-repl-cli",
+      "title": "mtcctl repl: interactive, scriptable CLI command shell",
+      "description": "## Goal\n`mtcctl repl` (§18.6): an interactive, scriptable command shell over the full mtcctl command tree — the agent-preferred REPL (OQ-10): deterministic, output-captured, no per-command process spawn.\n\n## Acceptance Criteria\n- `mtcctl repl` starts a readline loop (history, Ctrl-D exit) dispatching lines through the existing clap command tree in-process, reusing one API client connection\n- Non-interactive: `mtcctl repl --script file` and piped stdin execute line-by-line, echoing commands; stop-on-error by default with `--keep-going` override\n- Deterministic output: no ANSI when stdout is not a TTY; `--output json` respected per command; each command's output delimited for machine parsing\n- Built-ins: `help`, `exit`; a failing command does not kill the interactive session\n- Exit code reflects last (or first failing) command in script mode\n\n## Out of Scope\n- New admin operations (only re-exposes existing commands)\n- evcxr REPL (`dev-repl-evcxr`)\n\n## Testing\n- Unit: line parsing, dispatch, stop-on-error semantics\n- E2E: shell test pipes a script through `mtcctl repl` against the demo stack and asserts delimited JSON outputs (§19.13)\n\n## Demo\n`mtcctl repl` → `status`, `batch list`, `cert issue --domain demo.test` interactively; then the same via `--script` with byte-identical output.",
+      "size": "M",
+      "priority": 1,
+      "phase": 3,
+      "deps": ["dev-demo-single-region", "EXTERNAL:mtcctl CLI scaffolding with clap command tree (admin-surface epic)"],
+      "labels": ["dev-experience", "repl", "agent-affordance"]
+    },
+    {
+      "slug": "dev-fixture-million-entries",
+      "title": "million-entries fixture: deterministic large-log snapshot",
+      "description": "## Goal\nThe `million-entries` fixture (§18.5): a deterministic large-log snapshot for performance testing, realistic demos, and reproducing bugs that only appear at depth.\n\n## Acceptance Criteria\n- Generator (xtask or script) drives the batch builder + tree updater directly (bypassing ACME) with seeded entries from `dev-entrygen`, under FakeClock acceleration\n- Produces exactly 1,000,000 entries; final tree head is byte-stable across regenerations (expected root documented)\n- Saved via the fixture framework as `fixtures/million-entries` with provenance (seed, generator version) in the manifest\n- `make fixture-load name=million-entries` restores it and a sampled inclusion proof verifies via `mtcctl log inclusion`\n- Generation is streamed (bounded memory) and completes in documented, laptop-feasible time\n\n## Out of Scope\n- Fixture engine changes (`dev-fixture-engine`, `dev-fixture-targets`)\n- Benchmarks consuming the fixture (`make bench`, testing epic)\n\n## Testing\n- Integration: reduced-size (10k) generation asserted byte-stable in CI; full 1M run in the nightly lane\n- E2E: load fixture → sampled inclusion proofs verify via CLI (§19.13)\n\n## Demo\n`make fixture-load name=million-entries` → admin UI shows a 1M-entry tree; proof verification round-trips instantly.",
+      "size": "M",
+      "priority": 1,
+      "phase": 3,
+      "deps": ["dev-fixture-targets", "dev-synthetic-entry-gen", "dev-fake-clock", "batch-builder", "tree-updater"],
+      "labels": ["dev-experience", "fixtures", "performance"]
+    },
+    {
+      "slug": "dev-docs-quickstart",
+      "title": "Dev-experience documentation: quickstart, target catalog, troubleshooting",
+      "description": "## Goal\nDocumentation for the dev experience (§18): fresh-clone quickstart, the full make-target catalog, and troubleshooting — making the \"everything runnable on a laptop\" goal (§1) discoverable without tribal knowledge.\n\n## Acceptance Criteria\n- README quickstart: clone → `make doctor` → `make demo` → open `localhost:8080`, with expected-output snippets\n- `docs/dev-environment.md` documents every §18.8 target with purpose, args, and owning component; kept in sync via the `make help` smoke test\n- Troubleshooting section maps common failures to `make doctor` checks and fixes\n- Walkthroughs for each dev-experience feature shipped at time of writing (time travel §18.4, fixtures §18.5, REPLs §18.6, hot reload §18.7), extended as later targets land\n- Verified by a scripted fresh-clone run in a clean container\n\n## Out of Scope\n- Agent-facing context docs (`AGENTS.md`, §23 — agent-harnessing epic)\n- Operational runbooks (§21.2, observability epic)\n\n## Testing\n- E2E: quickstart commands executed verbatim by a CI script (doc-drift guard)\n- Lint: markdown link check\n\n## Demo\nHand the README to someone new: they reach a running CA and issue a cert without asking a single question.",
+      "size": "S",
+      "priority": 2,
+      "phase": 3,
+      "deps": ["dev-demo-single-region", "dev-doctor"],
+      "labels": ["dev-experience", "docs"]
+    },
+    {
+      "slug": "dev-crr-replication-sim",
+      "title": "Local CRR and Global Tables replication simulator with configurable lag",
+      "description": "## Goal\nLocal replication simulator (§18.3): simulated S3 CRR and DynamoDB Global Tables replication between LocalStack instances with configurable lag — the substrate the three-region environment is built on.\n\n## Acceptance Criteria\n- Replicator binary (`crates/dev-replicator`) copies new S3 object versions source→target (polling ListObjectVersions), preserving keys, version order, and Object Lock metadata\n- DDB replication tails the source table (Streams or scan-diff) and applies to target with last-writer-wins parity to Global Tables semantics\n- Configurable per-link lag (`REPL_LAG_MS`); pause/resume via signal or local control endpoint (the partition hook)\n- Emits a replication-lag log line/metric per link\n- Runs as N instances for arbitrary directed-link topologies\n\n## Out of Scope\n- Three-region compose topology (`dev-multiregion-harness`)\n- Production CRR/Global Tables configuration in CDK (foundation-infra)\n\n## Testing\n- Unit: dedup/ordering, lag scheduling\n- Integration: two LocalStack containers — object written to A appears in B after the lag, not before; pause halts propagation\n- Property: applying the same event stream twice is idempotent\n\n## Demo\nStart two LocalStacks + replicator with 5 s lag; `aws s3 cp` to A; watch the object appear in B five seconds later.",
+      "size": "M",
+      "priority": 1,
+      "phase": 5,
+      "deps": ["localstack-dev-env"],
+      "labels": ["dev-experience", "multi-region"]
+    },
+    {
+      "slug": "dev-multiregion-harness",
+      "title": "make demo-multiregion: three-region local simulation environment",
+      "description": "## Goal\n`make demo-multiregion` (§18.3): three local region stacks (us-east-1 primary; us-west-2, eu-west-1 standby) with simulated CRR and Global Tables replication — the roadmap's \"multi-region simulation in dev environment\" (§24 Phase 5).\n\n## Acceptance Criteria\n- Compose topology: per-region LocalStack + CA service instance with region-scoped config and ports (admin UIs on 8080/8081/8082), plus replicator instances matching the production CRR fan-out\n- Primary holds the lease and issues; standbys run read-only mode and serve status (lease/epoch protocol)\n- `make demo-multiregion` gates on all three regions healthy; `make demo-multiregion-down` cleans up fully; idempotent re-runs\n- Smoke: a cert issued in the primary is visible from a standby's state within the configured lag bound\n- Region set and lag configurable in one file; defaults documented\n\n## Out of Scope\n- Partition and failover scenarios (`dev-partition-failover-scenarios`)\n- Chaos test suite (§19.9, testing epic)\n\n## Testing\n- Integration: replicator wiring per link\n- E2E: bring-up smoke asserting the lease is held by exactly one region and standby replication lag is within bound\n\n## Demo\n`make demo-multiregion` → three admin UIs side by side; issue in us-east-1, watch the entry surface in eu-west-1 seconds later.",
+      "size": "M",
+      "priority": 0,
+      "phase": 5,
+      "deps": ["dev-demo-single-region", "dev-crr-replication-sim", "lease-epoch-protocol"],
+      "labels": ["dev-experience", "multi-region", "demo"]
+    },
+    {
+      "slug": "dev-partition-failover-scenarios",
+      "title": "make partition-region and scripted local failover exercise",
+      "description": "## Goal\nPartition simulation and the scripted failover exercise (§18.3, §13): `make partition-region X` / `make heal-region X` plus an end-to-end local failover demo driven by `mtcctl failover initiate --to us-west-2`.\n\n## Acceptance Criteria\n- `make partition-region X` disconnects region X's containers from the shared network and pauses its replicator links; `make heal-region X` restores both\n- Partitioned primary loses lease renewal; standbys keep serving reads (observable in admin UIs)\n- `tests/e2e/failover-demo.sh`: partition us-east-1 → `mtcctl failover initiate --to us-west-2` → issuance resumes in the new primary at a bumped epoch; on heal, writes from the old primary are rejected (no split-brain, lease/epoch invariants §13)\n- Scenario is re-runnable without full environment teardown\n- Both targets no-op with a clear message when the multi-region environment is not running\n\n## Out of Scope\n- Failover command implementation (multi-region + admin-surface epics)\n- Automated failover (explicit non-goal, §1)\n\n## Testing\n- Integration: network disconnect/heal mechanics\n- E2E: the failover demo script in the nightly lane (§19.13)\n\n## Demo\n`make demo-multiregion`, `make partition-region us-east-1`, `mtcctl failover initiate --to us-west-2` → watch us-west-2 take over issuance live.",
+      "size": "M",
+      "priority": 1,
+      "phase": 5,
+      "deps": ["dev-multiregion-harness", "EXTERNAL:mtcctl failover initiate command (multi-region epic)"],
+      "labels": ["dev-experience", "multi-region", "failover"]
+    },
+    {
+      "slug": "dev-audit-demo-wiring",
+      "title": "Wire self-auditor into make demo and add make audit",
+      "description": "## Goal\nWire the self-auditor into the local demo (§18.1) and add `make audit` (§18.8), so every demo run continuously demonstrates the transparency story (§25.8) on a laptop.\n\n## Acceptance Criteria\n- `make demo` starts the self-auditor on a periodic dev-mode interval (from the dev profile) against the local stack\n- `make audit` triggers one full audit pass on demand and prints a human-readable verdict summary\n- Audit results surface in the admin UI audit view and via `mtcctl`\n- A dev-only corruption helper script damages one tile; the next audit pass fails loudly, naming the tile — the documented \"seeing is believing\" check\n- Auditor log lines are clearly attributed in demo output\n\n## Out of Scope\n- Self-auditor implementation (observability epic)\n- Compliance report generation (§20.3)\n\n## Testing\n- Integration: auditor pass against demo-stack state\n- E2E: demo smoke extended — audit verdict OK; corruption helper flips it to FAIL\n\n## Demo\n`make demo` → `make audit` prints PASS; run the corruption helper, `make audit` prints FAIL identifying the corrupted tile.",
+      "size": "S",
+      "priority": 1,
+      "phase": 6,
+      "deps": ["dev-demo-single-region", "EXTERNAL:self-auditor runnable locally in dev mode (observability epic)"],
+      "labels": ["dev-experience", "demo", "audit"]
+    },
+    {
+      "slug": "dev-fixture-with-revocations",
+      "title": "with-revocations fixture: deterministic revoked-cert snapshot",
+      "description": "## Goal\nThe `with-revocations` fixture (§18.5): a deterministic snapshot containing issued-then-revoked certificates, for reproducing revocation-path bugs and demoing revocation checking.\n\n## Acceptance Criteria\n- Generator seeds a modest log (~10k entries) via `dev-entrygen`, then revokes a deterministic subset (~1%) through the local revocation flow\n- Saved via the fixture framework as `fixtures/with-revocations` with seed and revoked-set provenance in the manifest\n- Regeneration is byte-stable; expected tree head and revocation-set hash documented\n- `make fixture-load name=with-revocations` → `mtcctl` reports revoked certs as revoked and the rest as valid\n- Generation completes in CI-feasible time (<5 min)\n\n## Out of Scope\n- Revocation mechanics (revocation epic, §16)\n- Post-pruning fixture (`dev-fixture-post-pruning`)\n\n## Testing\n- Integration: regeneration byte-stability check\n- E2E: load fixture → revocation status assertions via CLI (§19.13)\n\n## Demo\n`make fixture-load name=with-revocations` → `mtcctl cert lookup` on a known-revoked serial reports revoked instantly.",
+      "size": "S",
+      "priority": 2,
+      "phase": 7,
+      "deps": ["dev-fixture-targets", "dev-synthetic-entry-gen", "EXTERNAL:revocation flow runnable locally (revocation epic)"],
+      "labels": ["dev-experience", "fixtures", "revocation"]
+    },
+    {
+      "slug": "dev-fixture-post-pruning",
+      "title": "post-pruning fixture: deterministic pruned-log snapshot",
+      "description": "## Goal\nThe `post-pruning` fixture (§18.5): a deterministic snapshot of a log after pruning has run, for validating that proofs for retained entries survive pruning and making pruning-adjacent bugs reproducible.\n\n## Acceptance Criteria\n- Generator builds a seeded log, advances the FakeClock past retention windows (using the `dev-time-advance` machinery), and runs the local pruning workflow to completion\n- Saved via the fixture framework as `fixtures/post-pruning` with provenance (seed, pruned range, retention config) in the manifest\n- Regeneration byte-stable; expected head and pruned-range boundaries documented\n- Loaded state verifies: inclusion proof for a retained entry passes while the pruned range is absent from storage yet the tree head remains valid (§19.2 pruning invariant)\n- `make fixture-load name=post-pruning` completes in seconds\n\n## Out of Scope\n- Pruning workflow implementation (pruning epic, §15)\n- Object Lock retention enforcement E2E (§15.3, pruning epic)\n\n## Testing\n- Integration: regeneration byte-stability\n- E2E: load → sampled proof for a retained entry verifies via CLI (§19.13)\n\n## Demo\n`make fixture-load name=post-pruning` → admin UI shows pruned ranges; `mtcctl log inclusion` on a retained entry verifies.",
+      "size": "S",
+      "priority": 2,
+      "phase": 7,
+      "deps": ["dev-fixture-targets", "dev-synthetic-entry-gen", "dev-time-advance", "EXTERNAL:pruning workflow runnable locally (pruning epic)"],
+      "labels": ["dev-experience", "fixtures", "pruning"]
+    }
+  ]
+}
