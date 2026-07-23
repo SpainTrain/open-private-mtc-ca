@@ -11,7 +11,6 @@ CRATE: acme-core
   PUBLIC API:
     - mod account
     - mod client
-    - mod clock
     - mod error
     - mod jws
     - mod nonce
@@ -22,10 +21,6 @@ CRATE: acme-core
     - enum AccountStatus
     - struct AccountStore
     - struct NewAccountRequest
-    - trait Clock
-    - struct ManualClock
-    - struct MonotonicClock
-    - struct MonotonicMillis
     - enum AcmeError
     - const ES256
     - enum AccountKeySource
@@ -45,7 +40,7 @@ CRATE: acme-core
     - const DIRECTORY_PATH
     - const NEW_ACCOUNT_PATH
     - const NEW_NONCE_PATH
-  DEPENDS ON: (none)
+  DEPENDS ON: clock
   USED BY: (none)
 
 CRATE: clock
@@ -57,6 +52,16 @@ CRATE: clock
     - trait Clock
     - struct SystemClock
   DEPENDS ON: (none)
+  USED BY: acme-core, cloud-memory, dev-replicator
+
+CRATE: cloud-memory
+  PURPOSE: Pure in-memory implementations of the cloud-types traits (ObjectStore, ObjectLock, ReplicatedKv, Hsm) for zero-dependency unit tests and local dev (spec §9.3, §9.6)
+  PUBLIC API:
+    - struct MemoryHsm
+    - type MemoryObjectLock
+    - struct MemoryObjectStore
+    - struct MemoryReplicatedKv
+  DEPENDS ON: clock, cloud-types
   USED BY: (none)
 
 CRATE: cloud-types
@@ -87,15 +92,55 @@ CRATE: cloud-types
     - struct UpdateExpression
     - enum Value
   DEPENDS ON: (none)
+  USED BY: cloud-memory
+
+CRATE: dev-replicator
+  PURPOSE: Local S3 CRR + DynamoDB Global Tables replication simulator with configurable, runtime-adjustable per-link lag (spec §18.3)
+  PUBLIC API:
+    - mod config
+    - mod control
+    - mod ddb
+    - mod lag
+    - mod link
+    - mod s3
+    - enum ReplicatorError
+    - struct ApplySummary
+  DEPENDS ON: clock
   USED BY: (none)
 
 CRATE: mtc
   PURPOSE: Core Merkle Tree Certificate domain newtypes and spec primitive types (clean-room, draft-ietf-plants-merkle-tree-certs)
   PUBLIC API:
     - mod error
+    - mod signing
+    - mod tree
     - mod types
+    - mod wire
     - enum HashOutputError
     - enum IdError
+    - fn scheme_for
+    - EcdsaP256
+    - enum KeyRejected
+    - enum SignError
+    - struct Signature
+    - enum SignatureAlgorithm
+    - trait SignatureScheme
+    - struct SigningKey
+    - struct UnknownAlgorithm
+    - struct UnsupportedAlgorithm
+    - enum VerifyError
+    - struct VerifyingKey
+    - decompose_range
+    - empty_root
+    - hash_leaf
+    - hash_node
+    - Hasher
+    - MerkleTree
+    - Sha256Hasher
+    - Subtree
+    - LEAF_PREFIX
+    - NODE_PREFIX
+    - SHA256_EMPTY_ROOT
     - type BatchId
     - struct BatchTag
     - struct Epoch
@@ -105,6 +150,11 @@ CRATE: mtc
     - type LogId
     - struct LogTag
     - struct TreeSize
+    - trait TlsParse
+    - TlsReader
+    - trait TlsSerialize
+    - WireError
+    - struct U24
   DEPENDS ON: (none)
   USED BY: (none)
 
