@@ -13,7 +13,7 @@ gate before merge. Personas live in `.claude/agents/`.
 | `impl-standard` | Sonnet | Most feature/crate/adapter/endpoint/test work with a clear ticket contract. Judgment within bead scope. |
 | `impl-hard` | Opus | Tree/proof math, wire-format parsing, crypto/HSM, lease/epoch, Kani/Loom design, security-critical parsing, cross-crate design. |
 | `qa-reviewer` | Sonnet | Adversarial pre-merge review. Read-and-run only (no write tools). Verdict: PASS / FAIL / PASS-WITH-FINDINGS. |
-| `crypto-reviewer` | Opus | Specialist crypto audit on crypto-touching beads only. Read-and-run only. Checklist of known misimplementation classes (domain separation, malleability, nonce hygiene, timing, proof verification, key handling, KATs). |
+| `crypto-reviewer` | Opus (Fable for crown jewels) | Specialist crypto audit on crypto-touching beads only. Read-and-run only. Checklist of known misimplementation classes (domain separation, malleability, nonce hygiene, timing, proof verification, key handling, KATs). |
 
 ## Triage rubric (orchestrator, at dispatch)
 
@@ -67,6 +67,18 @@ over-assignment silently burns the expensive model on trivial work.
    context; serialization of any signed structure. Label the bead
    `crypto-review` when marking it in_progress. When unsure whether it
    qualifies, it qualifies.
+
+   **Crypto review levels** (same persona, per-dispatch model override):
+   - *Opus (default)* — crypto-adjacent wiring: plumbing existing verified
+     primitives, key-handle config, distribution mechanics.
+   - *Fable (crown jewels)* — inclusion/consistency proof verification, tree
+     hashing/domain separation, checkpoint signing, wire formats of signed
+     structures, HSM key-handling paths, JWS verification. The checklist
+     covers known misimplementation classes; the deeper model is bought for
+     what no checklist names — composition bugs and absence-of-check bugs.
+   - *Fable adjudication* — a disputed FAIL, or a PASS the orchestrator
+     doubts, gets one Fable re-review before merge. Label `crypto-review:fable`
+     when the crown-jewel level applies.
 4. On **PASS** / **PASS-WITH-FINDINGS** (from every required reviewer):
    orchestrator merges, re-verifies on integrated main, closes the bead
    (`bd close`), files findings as new beads.
