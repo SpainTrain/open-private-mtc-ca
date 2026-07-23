@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "lib": ["ES2022"],
+    "declaration": true,
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "noImplicitThis": true,
+    "alwaysStrict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "forceConsistentCasingInFileNames": true,
+    "inlineSourceMap": true,
+    "inlineSources": true,
+    "skipLibCheck": true,
+    "typeRoots": ["./node_modules/@types"]
+  },
+  "include": ["bin/**/*.ts", "lib/**/*.ts", "test/**/*.ts"],
+  "exclude": ["node_modules", "cdk.out"]
+}

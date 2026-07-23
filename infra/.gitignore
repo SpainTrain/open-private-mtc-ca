@@ -1,0 +1,15 @@
+# Dependencies
+node_modules/
+
+# CDK synth output and context cache
+cdk.out/
+cdk.context.json
+
+# Compiled JS (tsc output when run manually; ts-node is used for synth)
+*.js
+!jest.config.js
+!eslint.config.mjs
+*.d.ts
+
+# Coverage
+coverage/
