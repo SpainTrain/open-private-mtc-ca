@@ -76,6 +76,14 @@ Each entry states what is relaxed, where, and why.
    `cargo fmt --check` enforces, so `imports_granularity`, `group_imports`,
    `wrap_comments`, etc. stay out until stabilized.
 
+6. **`clippy::multiple_crate_versions` allowed workspace-wide**
+   (`Cargo.toml [workspace.lints.clippy]`) — the lint inspects the full
+   workspace dependency graph from every crate's session, so a single
+   transitive dupe (the generated admin-api crates pull `syn` 2 and 3)
+   fails every crate with a finding no crate can act on. Duplicate-version
+   policy belongs to cargo-deny (`fnd-license-policy` ticket), which has a
+   real allowlist and reports once, at the workspace level.
+
 ## Known gotchas
 
 - **`clippy::duration_suboptimal_units` vs unstable constructors** — this

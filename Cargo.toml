@@ -54,6 +54,11 @@ missing_docs = "warn"
 pedantic = { level = "warn", priority = -1 }
 nursery = { level = "warn", priority = -1 }
 cargo = { level = "warn", priority = -1 }
+# Duplicate-dependency-version policy is owned by cargo-deny (fnd-license-policy
+# ticket) with a real allowlist; this clippy lint fires workspace-wide on any
+# transitive dupe (e.g. generated API crates pulling syn 2 + syn 3) and is not
+# actionable per-crate. Deviation documented in docs/lint-policy.md.
+multiple_crate_versions = "allow"
 # Denied in non-test code; tests are exempt via clippy.toml's
 # allow-unwrap-in-tests / allow-expect-in-tests (the documented pattern).
 unwrap_used = "deny"
