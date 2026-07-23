@@ -125,3 +125,12 @@ bd prime                # Refresh Beads context
 
 **Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md for details and anti-patterns.
 <!-- END BEADS CODEX SETUP -->
+
+## Delegation and model tiering
+
+Implementation work is dispatched to tiered personas in `.claude/agents/`
+(impl-mechanical/Haiku, impl-standard/Sonnet, impl-hard/Opus, plus the
+read-only qa-reviewer/Sonnet pre-merge gate). Every bead is worked by the
+cheapest persona that can handle it; implementers report `BLOCKED` to
+escalate rather than guessing, and only the orchestrator closes beads —
+on a QA PASS. Full rubric: [docs/agent-delegation.md](docs/agent-delegation.md).
