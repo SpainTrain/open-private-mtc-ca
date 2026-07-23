@@ -1,0 +1,45 @@
+# MTC-CA Cargo workspace root.
+#
+# Other tickets add crates by dropping a new directory under `crates/` — the
+# glob member pattern picks it up automatically, so parallel work never has to
+# edit this file (mirrors the `mk/*.mk` make-target convention; see CONTRIBUTING).
+#
+# Shared metadata, the pinned dependency baseline (spec §4), and the lint
+# baseline (spec §22.12) live here and are inherited by member crates via
+# `edition.workspace = true`, `dep.workspace = true`, and `lints.workspace = true`.
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.97"
+license = "Apache-2.0"
+repository = "https://github.com/SpainTrain/open-private-mtc-ca"
+authors = ["MTC-CA contributors"]
+
+# Pinned baseline dependencies (spec §4). Declared here and inherited by member
+# crates via `<dep>.workspace = true`; unused entries are not fetched until a
+# crate references them. Strict lint/tooling deps arrive with their own tickets.
+[workspace.dependencies]
+# Async runtime — features are added per-crate at the inheritance site.
+tokio = { version = "1", default-features = false }
+# Serialization (derive on by default for ergonomics at the call site).
+serde = { version = "1", features = ["derive"] }
+# Error handling: thiserror for libraries, eyre/color-eyre for binaries.
+thiserror = "2"
+eyre = "0.6"
+color-eyre = "0.6"
+# Structured logging.
+tracing = "0.1"
+# Test tooling.
+proptest = "1"
+pretty_assertions = "1"
+mockall = "0.13"
+
+# Lint baseline (spec §22.12). Only `unsafe_code = "forbid"` is set here; the
+# strict clippy regime (pedantic/nursery/cargo, unwrap/expect bans, missing_docs)
+# lands with the fnd-rust-lint-config ticket. Member crates opt in with
+# `[lints] workspace = true`.
+[workspace.lints.rust]
+unsafe_code = "forbid"

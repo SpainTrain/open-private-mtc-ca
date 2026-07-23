@@ -1,0 +1,7 @@
+# Pinned toolchain for the whole workspace. rustup reads this file and installs
+# the exact toolchain (with rustfmt + clippy) on the first `cargo` invocation,
+# so humans and agents build against identical compilers. Bump deliberately.
+[toolchain]
+channel = "1.97.1"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

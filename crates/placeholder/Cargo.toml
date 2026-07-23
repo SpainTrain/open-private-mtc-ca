@@ -1,0 +1,15 @@
+# Trivial placeholder crate. It exists only to give the workspace a member so
+# the unit-test and doctest harnesses run from a fresh clone. Expected to be
+# removed once the first real crate lands (core-mtc-library / cloud-abstraction
+# epics). It intentionally has no dependencies.
+[package]
+name = "mtc-placeholder"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
