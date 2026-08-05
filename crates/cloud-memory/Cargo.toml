@@ -1,8 +1,8 @@
 # cloud-memory: pure in-memory implementations of the four cloud-types traits
 # (ObjectStore, ObjectLock, ReplicatedKv, Hsm) — spec §9.3, §9.6. Zero external
 # dependencies: no Docker, no LocalStack, no SoftHSM. This is the crate every
-# other crate unit-tests against; the shared `cloud-test-suite` conformance
-# suites (separate tickets) will run against it too.
+# other crate unit-tests against; `tests/` runs the shared `cloud-test-suite`
+# conformance suites (spec §9.7) against every trait impl here.
 [package]
 name = "cloud-memory"
 version = "0.1.0"
@@ -36,12 +36,16 @@ getrandom = "0.3"
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync"] }
 proptest = { workspace = true }
-pretty_assertions = { workspace = true }
 # Test-only: names the ZeroizeOnDrop trait for a compile-time assertion that
 # MemoryHsm's key material is zeroized on drop (p256::ecdsa::SigningKey
 # implements it via elliptic-curve's default "zeroize" feature) — never used
 # to zeroize anything ourselves.
 zeroize = "1"
+# Runs the shared cloud-test-suite conformance suites (spec §9.7) against
+# this backend from `tests/`; the reverse dev-dependency (cloud-test-suite ->
+# cloud-memory, to self-validate the suites) is an intentional Cargo
+# dev-dependency cycle -- see crates/cloud-test-suite/Cargo.toml.
+cloud-test-suite = { path = "../cloud-test-suite" }
 
 [lints]
 workspace = true

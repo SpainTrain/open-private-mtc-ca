@@ -1,0 +1,58 @@
+# cloud-test-suite: shared factory-closure conformance suites for the four
+# cloud-types traits (ObjectStore, ObjectLock, ReplicatedKv, Hsm) -- spec
+# §9.7. Every backend (cloud-memory today; cloud-aws via LocalStack and
+# cloud-softhsm via SoftHSM2 in later tickets) runs the identical suite
+# functions here, so behavioral consistency across implementations is
+# mechanically enforced rather than reviewed by inspection (spec §9.5: "a
+# backend that lacks any of these [capabilities] isn't a fit").
+[package]
+name = "cloud-test-suite"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Shared factory-closure conformance suites for cloud-types backends: ObjectStore, ObjectLock, ReplicatedKv, Hsm (spec §9.7)"
+publish = false
+
+[dependencies]
+cloud-types = { path = "../cloud-types" }
+# ObjectLock suite: retention instants come from an injected Arc<dyn Clock>
+# (clock.now() + duration), never SystemTime::now() directly (rule
+# no-systemtime-now-in-prod, spec §22.11) -- clippy's disallowed-methods lint
+# has no #[cfg(test)] exemption for that rule, so this applies even though
+# the suite is exclusively test-support code.
+clock = { path = "../clock" }
+# Matches the trait signatures in cloud-types (async fn in a dyn-compatible
+# trait) -- this crate's own suite functions are plain generic async fns, not
+# traits, so async-trait itself is not needed here.
+#
+# Property-based generation for the ReplicatedKv suite's randomized
+# concurrent-CAS task counts and the Hsm suite's randomized message case
+# (spec §19.2). Not in [workspace.dependencies] yet; pinned here per the
+# parallel-ticket convention (reconciled at merge).
+proptest = { workspace = true }
+# tokio::spawn (feature "rt") drives the ReplicatedKv suite's N-concurrent-CAS
+# race across real tasks -- the same technique cloud-memory's own
+# (now-removed, folded in here) concurrency test used.
+tokio = { workspace = true, features = ["rt"] }
+# Verifies Hsm::sign's output against Hsm::get_public_key's exported SPKI DER
+# (spec §14.1, §19.6): every KeySpec::EcdsaP256 backend must produce a
+# signature a plain RustCrypto p256 verifier accepts. Version pinned to match
+# cloud-memory's existing p256 dependency, keeping the workspace's duplicate-
+# version footprint down.
+p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
+
+[dev-dependencies]
+# Self-validates the suites against the pure-memory backend (spec §9.7: "the
+# memory backend proves the suite itself"). cloud-memory's own tests/ depend
+# on this crate the other way (to run the suite against MemoryObjectStore /
+# MemoryReplicatedKv / MemoryHsm), forming a dev-dependency cycle -- Cargo
+# explicitly supports this since dev-dependencies are excluded from the
+# normal (non-test) build graph.
+cloud-memory = { path = "../cloud-memory" }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true
