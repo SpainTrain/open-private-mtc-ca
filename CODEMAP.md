@@ -52,7 +52,7 @@ CRATE: clock
     - trait Clock
     - struct SystemClock
   DEPENDS ON: (none)
-  USED BY: acme-core, cloud-memory, dev-replicator
+  USED BY: acme-core, cloud-memory, cloud-test-suite, dev-replicator
 
 CRATE: cloud-memory
   PURPOSE: Pure in-memory implementations of the cloud-types traits (ObjectStore, ObjectLock, ReplicatedKv, Hsm) for zero-dependency unit tests and local dev (spec §9.3, §9.6)
@@ -61,8 +61,22 @@ CRATE: cloud-memory
     - type MemoryObjectLock
     - struct MemoryObjectStore
     - struct MemoryReplicatedKv
-  DEPENDS ON: clock, cloud-types
-  USED BY: (none)
+  DEPENDS ON: clock, cloud-test-suite, cloud-types
+  USED BY: cloud-test-suite
+
+CRATE: cloud-test-suite
+  PURPOSE: Shared factory-closure conformance suites for cloud-types backends: ObjectStore, ObjectLock, ReplicatedKv, Hsm (spec §9.7)
+  PUBLIC API:
+    - mod hsm
+    - mod object_lock
+    - mod object_store
+    - mod replicated_kv
+    - fn run_hsm_suite
+    - fn run_object_lock_suite
+    - fn run_object_store_suite
+    - fn run_replicated_kv_suite
+  DEPENDS ON: clock, cloud-memory, cloud-types
+  USED BY: cloud-memory
 
 CRATE: cloud-types
   PURPOSE: Cloud-agnostic capability traits (ObjectStore, ObjectLock, ReplicatedKv, Hsm), DTOs, and error taxonomy for the MTC CA (spec §9)
@@ -92,7 +106,7 @@ CRATE: cloud-types
     - struct UpdateExpression
     - enum Value
   DEPENDS ON: (none)
-  USED BY: cloud-memory
+  USED BY: cloud-memory, cloud-test-suite
 
 CRATE: dev-replicator
   PURPOSE: Local S3 CRR + DynamoDB Global Tables replication simulator with configurable, runtime-adjustable per-link lag (spec §18.3)

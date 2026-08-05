@@ -129,79 +129,18 @@ impl Hsm for MemoryHsm {
     }
 }
 
+// Contract-level tests (sign/verify round-trip, distinct-key distinctness,
+// unknown-handle NotFound semantics, is_fips_validated posture) moved to the
+// shared cloud-test-suite Hsm conformance suite (spec §9.7), wired against
+// this backend in `crates/cloud-memory/tests/hsm_suite.rs` -- see
+// `docs/journal.md` (cloud-test-suite-hsm entry). One case stays here: it
+// inspects `MemoryHsm`'s concrete signing-key type, an implementation detail
+// no `Hsm` method exposes, so it cannot be generalized behind the trait.
 #[cfg(test)]
 mod tests {
-    use p256::ecdsa::signature::Verifier as _;
-    use p256::pkcs8::DecodePublicKey;
-    use pretty_assertions::assert_eq;
     use zeroize::ZeroizeOnDrop;
 
-    use super::*;
-
-    #[tokio::test]
-    async fn generate_sign_verify_round_trip() {
-        let hsm = MemoryHsm::new();
-        let handle = hsm
-            .generate_key(KeySpec::EcdsaP256)
-            .await
-            .expect("generate_key succeeds");
-
-        let message = b"checkpoint bytes";
-        let signature_bytes = hsm.sign(&handle, message).await.expect("sign succeeds");
-        assert_eq!(signature_bytes.len(), 64, "P1363 r||s encoding for P-256");
-
-        let public_key = hsm
-            .get_public_key(&handle)
-            .await
-            .expect("get_public_key succeeds");
-        let verifying_key =
-            VerifyingKey::from_public_key_der(public_key.spki_der()).expect("valid SPKI DER");
-        let signature = Signature::from_slice(&signature_bytes).expect("64-byte signature parses");
-        verifying_key
-            .verify(message, &signature)
-            .expect("signature verifies under the exported public key");
-    }
-
-    #[tokio::test]
-    async fn distinct_generated_keys_produce_distinct_public_keys() {
-        let hsm = MemoryHsm::new();
-        let a = hsm.generate_key(KeySpec::EcdsaP256).await.expect("gen a");
-        let b = hsm.generate_key(KeySpec::EcdsaP256).await.expect("gen b");
-        assert_ne!(a, b, "handles are distinct");
-
-        let pk_a = hsm.get_public_key(&a).await.expect("pk a");
-        let pk_b = hsm.get_public_key(&b).await.expect("pk b");
-        assert_ne!(pk_a.spki_der(), pk_b.spki_der());
-    }
-
-    #[tokio::test]
-    async fn sign_with_unknown_handle_is_not_found_never_panics() {
-        let hsm = MemoryHsm::new();
-        let err = hsm
-            .sign(&KeyHandle::new("no-such-key"), b"data")
-            .await
-            .expect_err("unknown handle must error, not panic");
-        assert!(matches!(err, CloudError::NotFound { .. }));
-    }
-
-    #[tokio::test]
-    async fn get_public_key_with_unknown_handle_is_not_found() {
-        let hsm = MemoryHsm::new();
-        assert!(matches!(
-            hsm.get_public_key(&KeyHandle::new("no-such-key")).await,
-            Err(CloudError::NotFound { .. })
-        ));
-    }
-
-    #[tokio::test]
-    async fn is_fips_validated_is_always_false() {
-        let hsm = MemoryHsm::new();
-        assert!(!hsm.is_fips_validated());
-        // Signing/generating a key must not change the posture.
-        let handle = hsm.generate_key(KeySpec::EcdsaP256).await.expect("gen");
-        hsm.sign(&handle, b"x").await.expect("sign");
-        assert!(!hsm.is_fips_validated());
-    }
+    use super::SigningKey;
 
     /// Compile-time proof, not a runtime check (inspecting freed memory would
     /// require `unsafe`, forbidden by rule `no-unsafe`): the private key type

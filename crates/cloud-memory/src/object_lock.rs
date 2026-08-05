@@ -90,158 +90,28 @@ impl ObjectLock for MemoryObjectStore {
     }
 }
 
+// Contract-level tests (round-trip, create-only, forward-only extend,
+// retention-vs-delete/overwrite/put interaction, NotFound semantics) moved to
+// the shared cloud-test-suite ObjectLock conformance suite (spec §9.7),
+// wired against this backend in
+// `crates/cloud-memory/tests/object_lock_suite.rs` -- see `docs/journal.md`
+// (cloud-test-suite-object entry). One case stays here: proving retention
+// *expiry* actually unblocks delete requires fast-forwarding wall-clock
+// time, a capability only a fake/injectable-clock backend has, so it is not
+// part of the cross-backend contract the shared suite enforces.
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
     use clock::{Clock, FakeClock};
-    use cloud_types::{ObjectStore, PutOptions};
-    use pretty_assertions::assert_eq;
+    use cloud_types::ObjectStore;
 
     use super::*;
 
     fn store_with_clock() -> (MemoryObjectStore, Arc<FakeClock>) {
         let clock = Arc::new(FakeClock::default());
         (MemoryObjectStore::new(clock.clone()), clock)
-    }
-
-    #[tokio::test]
-    async fn put_with_retention_then_get_retention_round_trips() {
-        let (store, clock) = store_with_clock();
-        let retain_until = clock.now() + Duration::from_hours(1);
-        store
-            .put_with_retention("checkpoints/0001", b"cp", retain_until)
-            .await
-            .expect("put_with_retention succeeds");
-        assert_eq!(
-            store.get_retention("checkpoints/0001").await.expect("get"),
-            retain_until
-        );
-        assert_eq!(store.get("checkpoints/0001").await.expect("get"), b"cp");
-    }
-
-    #[tokio::test]
-    async fn put_with_retention_is_create_only() {
-        let (store, clock) = store_with_clock();
-        let retain_until = clock.now() + Duration::from_hours(1);
-        store
-            .put_with_retention("checkpoints/0001", b"cp", retain_until)
-            .await
-            .expect("first put succeeds");
-        let err = store
-            .put_with_retention("checkpoints/0001", b"cp2", retain_until)
-            .await
-            .expect_err("second put must fail");
-        assert!(matches!(err, CloudError::AlreadyExists { .. }));
-    }
-
-    #[tokio::test]
-    async fn get_retention_missing_object_is_not_found() {
-        let (store, _clock) = store_with_clock();
-        assert!(matches!(
-            store.get_retention("missing").await,
-            Err(CloudError::NotFound { .. })
-        ));
-    }
-
-    #[tokio::test]
-    async fn get_retention_on_unlocked_object_is_not_found() {
-        let (store, _clock) = store_with_clock();
-        store
-            .put("plain/0001", b"x", PutOptions::default())
-            .await
-            .expect("plain put");
-        assert!(matches!(
-            store.get_retention("plain/0001").await,
-            Err(CloudError::NotFound { .. })
-        ));
-    }
-
-    #[tokio::test]
-    async fn extend_retention_forward_succeeds() {
-        let (store, clock) = store_with_clock();
-        let first = clock.now() + Duration::from_hours(1);
-        let second = clock.now() + Duration::from_hours(2);
-        store
-            .put_with_retention("checkpoints/0001", b"cp", first)
-            .await
-            .expect("put");
-        store
-            .extend_retention("checkpoints/0001", second)
-            .await
-            .expect("extend succeeds");
-        assert_eq!(
-            store.get_retention("checkpoints/0001").await.expect("get"),
-            second
-        );
-    }
-
-    #[tokio::test]
-    async fn extend_retention_rejects_shortening() {
-        let (store, clock) = store_with_clock();
-        let first = clock.now() + Duration::from_hours(2);
-        let shorter = clock.now() + Duration::from_hours(1);
-        store
-            .put_with_retention("checkpoints/0001", b"cp", first)
-            .await
-            .expect("put");
-        let err = store
-            .extend_retention("checkpoints/0001", shorter)
-            .await
-            .expect_err("shortening must fail");
-        assert!(matches!(err, CloudError::RetentionViolation { .. }));
-        // Unchanged.
-        assert_eq!(
-            store.get_retention("checkpoints/0001").await.expect("get"),
-            first
-        );
-    }
-
-    #[tokio::test]
-    async fn extend_retention_rejects_equal_instant() {
-        let (store, clock) = store_with_clock();
-        let retain_until = clock.now() + Duration::from_hours(1);
-        store
-            .put_with_retention("checkpoints/0001", b"cp", retain_until)
-            .await
-            .expect("put");
-        let err = store
-            .extend_retention("checkpoints/0001", retain_until)
-            .await
-            .expect_err("no-op extend must fail");
-        assert!(matches!(err, CloudError::RetentionViolation { .. }));
-    }
-
-    #[tokio::test]
-    async fn extend_retention_missing_object_is_not_found() {
-        let (store, clock) = store_with_clock();
-        assert!(matches!(
-            store
-                .extend_retention("missing", clock.now() + Duration::from_hours(1))
-                .await,
-            Err(CloudError::NotFound { .. })
-        ));
-    }
-
-    // --- Cross-trait: ObjectStore::delete / put must honor ObjectLock
-    // retention because both traits share this store's map (spec §9.5). ---
-
-    #[tokio::test]
-    async fn delete_during_retention_window_is_rejected() {
-        let (store, clock) = store_with_clock();
-        let retain_until = clock.now() + Duration::from_hours(1);
-        store
-            .put_with_retention("checkpoints/0001", b"cp", retain_until)
-            .await
-            .expect("put");
-        let err = store
-            .delete("checkpoints/0001")
-            .await
-            .expect_err("delete during retention must fail");
-        assert!(matches!(err, CloudError::RetentionViolation { .. }));
-        // Still there.
-        assert_eq!(store.get("checkpoints/0001").await.expect("get"), b"cp");
     }
 
     #[tokio::test]
@@ -257,39 +127,5 @@ mod tests {
             .delete("checkpoints/0001")
             .await
             .expect("delete after expiry succeeds");
-    }
-
-    #[tokio::test]
-    async fn overwrite_during_retention_window_is_rejected() {
-        let (store, clock) = store_with_clock();
-        let retain_until = clock.now() + Duration::from_hours(1);
-        store
-            .put_with_retention("checkpoints/0001", b"cp", retain_until)
-            .await
-            .expect("put");
-        let err = store
-            .put("checkpoints/0001", b"tampered", PutOptions::overwrite())
-            .await
-            .expect_err("overwrite during retention must fail");
-        assert!(matches!(err, CloudError::RetentionViolation { .. }));
-        assert_eq!(store.get("checkpoints/0001").await.expect("get"), b"cp");
-    }
-
-    #[tokio::test]
-    async fn if_not_exists_put_over_retained_key_is_already_exists() {
-        // AlreadyExists is the primary contract of IfNotExists — it fires
-        // before any retention check, regardless of whether the occupant
-        // happens to be retained.
-        let (store, clock) = store_with_clock();
-        let retain_until = clock.now() + Duration::from_hours(1);
-        store
-            .put_with_retention("checkpoints/0001", b"cp", retain_until)
-            .await
-            .expect("put");
-        let err = store
-            .put("checkpoints/0001", b"tampered", PutOptions::if_not_exists())
-            .await
-            .expect_err("if-not-exists put over occupied key must fail");
-        assert!(matches!(err, CloudError::AlreadyExists { .. }));
     }
 }

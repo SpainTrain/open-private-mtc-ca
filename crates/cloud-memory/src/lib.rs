@@ -61,6 +61,13 @@
 //! (`RustCrypto` `p256`, not a real HSM). See
 //! [`Hsm::is_fips_validated`](cloud_types::Hsm::is_fips_validated) for the
 //! corresponding honesty requirement.
+//!
+//! # Conformance
+//!
+//! `crates/cloud-memory/tests/` runs the shared `cloud-test-suite`
+//! conformance suites (spec §9.7) against every type here -- the same suites
+//! `cloud-aws` (via `LocalStack`) and `cloud-softhsm` (via `SoftHSM2`) will
+//! run in later tickets, proving all backends share one behavioral contract.
 
 #![warn(missing_docs)]
 

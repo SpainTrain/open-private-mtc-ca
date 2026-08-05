@@ -137,3 +137,20 @@ regardless of this change. Also tests/e2e/make-targets.sh stub_targets
 still lists api-gen though openapi-codegen-pipeline already implemented it
 (make-targets smoke FAILs on that one line, pre-existing). Neither touched
 here; both worth their own beads.
+
+## 2026-08-04 — cloud-test-suite: shared ObjectStore/ObjectLock/ReplicatedKv/Hsm conformance suites (mtc-2zb, mtc-8if, mtc-eef)
+
+**Ticket**: mtc-2zb,mtc-8if,mtc-eef
+**PR**: —
+
+Decisions:
+- New crates/cloud-test-suite (spec §9.7 factory-closure pattern: `Fn() -> Fut` where `Fut: Future<Output = S>`) generalizes the exact assertions cloud-memory previously ran inline in its src #[cfg(test)] blocks; cloud-memory's src now keeps only the tests that cannot be expressed through a trait boundary (object_lock's clock time-travel expiry case; hsm's ZeroizeOnDrop compile-time assertion; replicated_kv's proptest cases against the private apply_update_actions/check_conditions helpers), and crates/cloud-memory/tests/*_suite.rs wires the shared suites in against MemoryObjectStore/MemoryObjectLock/MemoryReplicatedKv/MemoryHsm.
+- cloud-test-suite dev-depends on cloud-memory to self-validate (spec §9.7: the memory backend "proves the suite itself", crates/cloud-test-suite/tests/memory_conformance.rs), and cloud-memory dev-depends on cloud-test-suite to run the suites against itself -- an intentional Cargo dev-dependency cycle (supported: dev-deps sit outside the normal, non-test build graph, so no cycle exists at compile time for real artifacts).
+- Ratified the two ReplicatedKv contract points memory-backend flagged for follow-up: cloud-types' existing rustdoc `# Errors` sections already resolve both (not truly ambiguous, just previously untested at the cross-backend level) -- atomic_update on a missing key is CloudError::NotFound (atomic_update mutates an existing item); transact's Update op on a missing key is CloudError::ConditionFailed, not NotFound (transact's documented error surface has no NotFound variant). Added test_atomic_update_missing_key_is_not_found and a new test_transact_update_on_missing_key_is_condition_failed (memory's original test suite didn't cover the transact case) to enforce both as cross-backend contract, not backend-specific behavior.
+- Concurrency property tests (spec §19.2) moved from cloud-memory's deleted tests/replicated_kv_concurrency.rs into the suite as two proptest-driven cases (put-based NotExists CAS race and atomic_update-based epoch CAS race). Task count per round is now proptest-generated (4..=48 via proptest::test_runner::TestRunner, 6 rounds) rather than the original's hand-picked constant (100 tasks x 20 rounds), to keep the suite fast when a later ticket runs it against LocalStack DynamoDB rather than pure in-memory locking.
+- Object_lock suite takes an injected Arc<dyn Clock> parameter (not SystemTime::now()) to compute retain_until instants -- clippy's disallowed-methods lint has no #[cfg(test)] exemption for rule no-systemtime-now-in-prod, so even test-support library code must go through Clock.
+- All four run_*_suite functions and their private helpers needed explicit `F: Fn() -> Fut + Sync` / `Fut: Future<Output = _> + Send` bounds: clippy::future_not_send (nursery, promoted to error via -D warnings) fired on every async helper without them, since `&F` requires `F: Sync` to be Send. Fixed at the source (real bounds, not a suppression) -- the factories used in practice (closures over Arc<Clock>/Arc<FakeClock>) already satisfy Send+Sync trivially.
+- Non-workspace deps added to cloud-test-suite: p256 0.13 (features ecdsa, pkcs8; version-pinned to match cloud-memory) as a real (non-dev) dependency, needed to verify Hsm suite signatures against the exported SPKI DER.
+
+Open questions:
+- (none new; the pre-existing clock crate non-tokio-feature clippy gotcha noted in the memory-backend/dev-crr-replication-sim journal entries was not reproduced during this ticket's `cargo clippy --workspace --all-targets --quiet -- -D warnings` runs -- appears already resolved on this worktree's base commit.)
