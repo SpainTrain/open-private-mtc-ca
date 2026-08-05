@@ -14,7 +14,44 @@
 //! Computing inclusion/consistency proofs themselves, and the tile mapping, are
 //! out of scope here (`mtclib-inclusion-proofs`, `mtclib-tiles`).
 
+use thiserror::Error;
+
 use crate::types::Index;
+
+/// Errors constructing a [`Subtree`] through a checked constructor
+/// ([`Subtree::try_new`] / [`Subtree::try_aligned`]).
+///
+/// The unchecked [`Subtree::new`] enforces its `start <= end` precondition only
+/// with a `debug_assert!`; these variants make the same faults recoverable, so
+/// proof and tile code (which must never panic on bad input) can reject them
+/// rather than construct a `Subtree` whose [`len`](Subtree::len) would otherwise
+/// have wrapped (crypto-review: `Subtree::len` computed `end - start`, which
+/// wraps in release for an inverted range).
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Error)]
+pub enum SubtreeError {
+    /// `start > end`: the half-open range is inverted and has no valid length.
+    #[error("inverted subtree range: start {start} > end {end}")]
+    Inverted {
+        /// The (larger) inclusive lower bound that was supplied.
+        start: u64,
+        /// The (smaller) exclusive upper bound that was supplied.
+        end: u64,
+    },
+
+    /// The range is empty, its length is not a power of two, or `start` is not
+    /// a multiple of its length — i.e. it is not the aligned power-of-two block
+    /// that a Merkle subtree node requires.
+    #[error(
+        "misaligned subtree range [{start}, {end}): \
+         not a non-empty, aligned, power-of-two block"
+    )]
+    Misaligned {
+        /// The inclusive lower bound that was supplied.
+        start: u64,
+        /// The exclusive upper bound that was supplied.
+        end: u64,
+    },
+}
 
 /// One aligned power-of-two block of the tree: the half-open entry range
 /// `[start, end)`.
@@ -23,6 +60,17 @@ use crate::types::Index;
 /// (`start < end`), has a power-of-two length, and is **aligned**
 /// (`start` is a multiple of its length) — so it corresponds to exactly one
 /// complete subtree, hence one interior (or leaf) node, of the Merkle tree.
+///
+/// # Alignment invariant (crypto-hardening)
+///
+/// The **only** representable range with `start > end` is one built by the
+/// unchecked [`new`](Subtree::new) in a release build, and even then
+/// [`len`](Subtree::len) *saturates* to `0` rather than wrapping to a huge
+/// value. Callers handling untrusted sizes should build ranges with
+/// [`try_new`](Subtree::try_new) (rejects inversion) or
+/// [`try_aligned`](Subtree::try_aligned) (rejects inversion **and**
+/// misalignment), so a `Subtree` that reaches proof/tile hashing carries its
+/// invariant by construction.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Subtree {
     start: Index,
@@ -30,14 +78,69 @@ pub struct Subtree {
 }
 
 impl Subtree {
-    /// Constructs the half-open range `[start, end)`.
+    /// Constructs the half-open range `[start, end)` without allocation.
     ///
-    /// This is a plain range value; callers that need the alignment invariant
-    /// should obtain `Subtree`s from [`decompose_range`], which only ever emits
-    /// non-empty aligned power-of-two blocks.
+    /// This is the fast, unchecked path used by [`decompose_range`], which only
+    /// ever passes non-empty aligned power-of-two blocks. The `start <= end`
+    /// precondition is enforced by a `debug_assert!`: misuse panics in debug and
+    /// test builds (so it cannot slip through CI), while release builds pay no
+    /// runtime check. Callers holding untrusted bounds should prefer the fallible
+    /// [`try_new`](Self::try_new) / [`try_aligned`](Self::try_aligned)
+    /// constructors, which return a [`SubtreeError`] instead of relying on the
+    /// assertion.
     #[must_use]
     pub const fn new(start: Index, end: Index) -> Self {
+        debug_assert!(
+            start.0 <= end.0,
+            "Subtree::new requires start <= end (inverted range)"
+        );
         Self { start, end }
+    }
+
+    /// Constructs the half-open range `[start, end)`, rejecting an inverted
+    /// range at runtime.
+    ///
+    /// Unlike [`new`](Self::new) this never panics; it is the constructor to use
+    /// on any range derived from untrusted input.
+    ///
+    /// # Errors
+    ///
+    /// [`SubtreeError::Inverted`] if `start > end`.
+    pub const fn try_new(start: Index, end: Index) -> Result<Self, SubtreeError> {
+        if start.0 > end.0 {
+            return Err(SubtreeError::Inverted {
+                start: start.0,
+                end: end.0,
+            });
+        }
+        Ok(Self { start, end })
+    }
+
+    /// Constructs an **aligned power-of-two** block — the full invariant every
+    /// [`decompose_range`] output satisfies and the only shape that names a real
+    /// interior (or leaf) node of the Merkle tree.
+    ///
+    /// # Errors
+    ///
+    /// - [`SubtreeError::Inverted`] if `start > end`.
+    /// - [`SubtreeError::Misaligned`] if the range is empty, its length is not a
+    ///   power of two, or `start` is not a multiple of that length.
+    pub const fn try_aligned(start: Index, end: Index) -> Result<Self, SubtreeError> {
+        if start.0 > end.0 {
+            return Err(SubtreeError::Inverted {
+                start: start.0,
+                end: end.0,
+            });
+        }
+        // Non-wrapping: `start <= end` was just proven.
+        let len = end.0 - start.0;
+        if len == 0 || !len.is_power_of_two() || !start.0.is_multiple_of(len) {
+            return Err(SubtreeError::Misaligned {
+                start: start.0,
+                end: end.0,
+            });
+        }
+        Ok(Self { start, end })
     }
 
     /// The inclusive lower bound of the range.
@@ -53,9 +156,15 @@ impl Subtree {
     }
 
     /// The number of entries the range covers (`end - start`).
+    ///
+    /// Uses a **saturating** subtraction so an inverted range (only reachable by
+    /// misusing the unchecked [`new`](Self::new) in a release build) yields `0`
+    /// rather than a wrapped, near-`u64::MAX` value — a length that would drive a
+    /// downstream allocation or hash loop into disaster. For every well-formed
+    /// `Subtree` (`start <= end`) this is exactly `end - start`.
     #[must_use]
     pub const fn len(self) -> u64 {
-        self.end.0 - self.start.0
+        self.end.0.saturating_sub(self.start.0)
     }
 
     /// Whether the range covers no entries (`start == end`). Never true for a
@@ -113,8 +222,75 @@ fn largest_pow2_le(x: u64) -> u64 {
 mod tests {
     use proptest::prelude::*;
 
-    use super::{decompose_range, Subtree};
+    use super::{decompose_range, Subtree, SubtreeError};
     use crate::types::Index;
+
+    #[test]
+    fn try_new_rejects_only_inverted_ranges() {
+        // Inverted: rejected with the exact bounds.
+        assert_eq!(
+            Subtree::try_new(Index(9), Index(4)).unwrap_err(),
+            SubtreeError::Inverted { start: 9, end: 4 },
+        );
+        // Empty and forward ranges are accepted (try_new checks inversion only).
+        assert!(Subtree::try_new(Index(5), Index(5)).is_ok());
+        assert!(Subtree::try_new(Index(4), Index(9)).is_ok());
+    }
+
+    #[test]
+    fn try_aligned_rejects_inverted_empty_and_misaligned() {
+        // Inverted -> Inverted (checked before alignment).
+        assert_eq!(
+            Subtree::try_aligned(Index(8), Index(4)).unwrap_err(),
+            SubtreeError::Inverted { start: 8, end: 4 },
+        );
+        // Empty, non-power-of-two length, and unaligned start -> Misaligned.
+        for (start, end) in [(4u64, 4u64), (0, 3), (1, 3), (2, 6)] {
+            assert_eq!(
+                Subtree::try_aligned(Index(start), Index(end)).unwrap_err(),
+                SubtreeError::Misaligned { start, end },
+                "expected [{start}, {end}) to be rejected as misaligned",
+            );
+        }
+        // A genuine aligned power-of-two block is accepted.
+        let block = Subtree::try_aligned(Index(4), Index(8)).unwrap();
+        assert_eq!(block.len(), 4);
+    }
+
+    #[test]
+    fn every_decompose_range_block_is_try_aligned_valid() {
+        // The invariant decompose_range promises is exactly the one try_aligned
+        // enforces: each emitted block round-trips through the checked
+        // constructor without error.
+        for tree_size in 0..=64u64 {
+            for start in 0..=tree_size {
+                for end in start..=tree_size {
+                    for block in decompose_range(Index(start), Index(end)) {
+                        assert!(
+                            Subtree::try_aligned(block.start(), block.end()).is_ok(),
+                            "decompose_range emitted a non-aligned block {block:?}",
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn try_new_empty_range_has_zero_saturating_len() {
+        let empty = Subtree::try_new(Index(5), Index(5)).unwrap();
+        assert_eq!(empty.len(), 0);
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "start <= end")]
+    fn new_debug_asserts_on_inverted_range() {
+        // In debug/test builds the unchecked constructor refuses an inverted
+        // range, so a misaligned/inverted Subtree is unconstructable in CI.
+        let _ = Subtree::new(Index(9), Index(4));
+    }
 
     /// Number of significant bits in `n` (`0` for `n == 0`, else
     /// `floor(log2 n) + 1`). Used to state the decomposition size bound.
