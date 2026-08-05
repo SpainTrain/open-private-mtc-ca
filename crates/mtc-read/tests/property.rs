@@ -175,15 +175,65 @@ fn level_two_tiles_reproduce_proof() {
     for i in [0u64, 1, 255, 256, 65_535, 65_536] {
         assert_plan_reproduces_proof(65_537, i, &tree, &leaves, &map);
     }
-    // Confirm a level-2 tile is genuinely referenced (not just present).
+    // Confirm a level-2 tile is genuinely referenced (single-hash run here).
     let plan = plan_inclusion(TreeSize(65_537), Index(65_536)).unwrap();
     assert!(
         plan.tiles().iter().any(|t| t.level() == mtc::TileLevel(2)),
         "leaf 65536 of a 65537-leaf tree must read a level-2 tile",
     );
 
-    let (tree2, leaves2, map2) = build(131_072);
-    for i in [0u64, 65_536, 131_071] {
-        assert_plan_reproduces_proof(131_072, i, &tree2, &leaves2, &map2);
+    // The multi-slot level-2 case (crypto F1 gap): N = 2^18, leaf 0. The top
+    // sibling is the complete 2^17-leaf subtree [2^17, 2^18) = TWO adjacent
+    // level-2 hashes, so it is a level-2 run with slot_count == 2 — not reached
+    // at N = 2^17, where every level-2 run is a single hash.
+    let n18: u64 = 1 << 18;
+    let (tree18, leaves18, map18) = build(n18);
+    assert_plan_reproduces_proof(n18, 0, &tree18, &leaves18, &map18);
+    let plan18 = plan_inclusion(TreeSize(n18), Index(0)).unwrap();
+    assert!(
+        plan18.steps().iter().any(|step| step
+            .blocks()
+            .iter()
+            .any(|b| b.coord().level() == mtc::TileLevel(2) && b.slot_count() == 2)),
+        "N=2^18, leaf 0 must yield a level-2 run with slot_count 2",
+    );
+}
+
+/// The acceptance criterion's literal upper bound. Ignored by default because a
+/// single 2^18+ `build_tiles` is minutes in a debug build; run it explicitly to
+/// substantiate the ≤ 2^20 claim in-repo:
+///
+/// ```console
+/// $ cargo test -p mtc-read --test property -- --ignored --nocapture
+/// ```
+///
+/// (or in a release CI lane, where it is fast). It builds a full 2^20-leaf tree
+/// (three tile levels) once and checks a spread of indices — boundaries, the
+/// midpoint, and both edges — against `mtc`'s own inclusion proofs.
+#[test]
+#[ignore = "literal N=2^20 build is ~minutes in debug; run with `--ignored` or in a release CI lane"]
+fn exhaustive_2_pow_20_reproduces_proof() {
+    let n: u64 = 1 << 20;
+    let (tree, leaves, map) = build(n);
+    let indices = [
+        0,
+        1,
+        255,
+        256,
+        257,
+        65_535,
+        65_536,
+        65_537,
+        131_071,
+        131_072,
+        n / 3,
+        n / 2,
+        (1 << 19) - 1,
+        1 << 19,
+        n - 2,
+        n - 1,
+    ];
+    for i in indices {
+        assert_plan_reproduces_proof(n, i, &tree, &leaves, &map);
     }
 }

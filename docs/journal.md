@@ -228,3 +228,87 @@ Decisions:
 
 Open questions:
 - The storage-facade epic (§8) MUST bridge the two path conventions: it owns the S3 key scheme (tiles/<L>/...zero-padded.../....tile with fixed-width lexicographic ordering, §8.1) and needs a mapping from the serving TileCoord::path() form to its storage key. Neither this bead nor mtc provides that bridge; it belongs with the storage facade. Flagging so it is not silently assumed.
+
+## 2026-08-05 — read-verify-core: mtc-verify relying-party inclusion verifier (§12.1 steps 4-6)
+
+**Ticket**: read-verify-core
+**PR**: —
+
+New minimal-dependency `mtc-verify` crate: `verify_inclusion(entry, proof,
+checkpoint, ca_pubkey) -> Result<Verified, VerifyError>` implementing spec §12.1
+steps 4-6 (reconstruct leaf hash, apply inclusion proof, verify ECDSA P-256
+checkpoint signature). Depends only on the core `mtc` crate.
+
+Decisions:
+- Two-crate split: `mtc-verify` is the MINIMAL relying-party verifier (depends
+  only on `mtc` — no storage/service/async — so it embeds in RP code); the
+  service-side tile planner lives in a separate `mtc-read` crate. Rejected a
+  single read-path crate — it would pull service deps into the RP-embeddable
+  verifier.
+- `entry: &LogEntry` (not raw TBS bytes): the leaf hash is reconstructed via
+  `mtc`'s canonical `LogEntry::leaf_hash`, which folds in the entry-type
+  discriminant (null-entry unforgeability, draft §5.3). Cert parse/decode
+  (steps 1-3) belong to read-verify-cert.
+- proof<->checkpoint binding: an explicit SizeMismatch check binds
+  proof.tree_size to checkpoint.tree_size, and the proof must reconstruct
+  exactly checkpoint.root_hash — so a proof for a smaller historical tree cannot
+  be replayed against a later checkpoint's root. Confirmed by crypto-read-path's
+  adversarial oracle (signature checked unconditionally; root bound).
+- log_id is deliberately NOT bound (crypto F2): a same-CA-key checkpoint for a
+  DIFFERENT log over the same root verifies here. That binding is the
+  certificate layer (§12.1 steps 1-3,7; read-verify-cert). Made explicit in the
+  crate + function rustdoc and a boundary test; `Verified::log_id()` surfaces
+  the checkpoint's log_id so the caller can perform the binding. signed_at is
+  unauthenticated (draft §5.4.1) — documented as not-for-freshness.
+- VerifyError variants map 1:1 to §20.2 telemetry reasons via a stable
+  reason() label (wrong_root, bad_signature, malformed_proof, size_mismatch,
+  malformed_entry, index_out_of_range). All signature failures (bad sig,
+  wrong/malformed key, algorithm mismatch, un-encodable input) collapse to the
+  single bad_signature bucket the AC names.
+
+Open questions:
+- log_id/trust-anchor binding and the signatureless landmark path are separate
+  tickets (read-verify-cert, read-verify-signatureless) that consume this core.
+- CODEMAP.md and Cargo.lock are regenerated centrally at merge (coordinator),
+  not per worktree — flagged, not committed here.
+
+## 2026-08-05 — read-tile-plan: mtc-read inclusion tile planner (§12.2 step 3)
+
+**Ticket**: read-tile-plan
+**PR**: —
+
+New `mtc-read` read-path service crate with the pure planner
+`plan_inclusion(tree_size, index) -> Result<TilePlan, PlanError>` (spec §12.2
+step 3, 256-leaf tlog-tiles model). No storage I/O, no hashing.
+
+Decisions:
+- Crate placement: created `crates/mtc-read` — the epic's read-path SERVICE
+  crate (matches the `-p mtc-read` demos in read-tile-plan and
+  read-proof-gen-core). Kept separate from `mtc-verify` (the minimal RP
+  verifier) per the two-crate split: service-side planner vs embeddable verifier.
+- TilePlan shape: one `PathStep` per audit-path sibling (leaf-to-root), each a
+  list of complete-subtree blocks (`TileSlotRun` = coord + slot + slot_count),
+  ascending by leaf. Documented combination rule: each block is the balanced MTH
+  of its contiguous slot-run; the sibling is the RIGHT-leaning combination of
+  its blocks. Proved every audit-path sibling range decomposes into
+  strictly-decreasing aligned blocks (so the right-fold is exact); the property
+  test confirms it against `mtc`'s own proofs.
+- No hashing/storage in this crate (kept in scope): hashing stays in `mtc`
+  (tree-primitives), fetching is read-proof-gen-core. The plan is pure data.
+- Reuses `mtc` tile geometry (`tiles_for_inclusion`, `tile_width`,
+  `decompose_range`, `TileCoord`) rather than reinventing; a test asserts
+  `plan.tiles()` equals `mtc::tiles_for_inclusion` for every leaf of every tree
+  up to 300.
+- `TileSlotRun::slot_count()` (not `len()`) — a run always has >= 1 slot, so a
+  `len`/`is_empty` pair would be misleading (and clippy len_without_is_empty).
+- Panic-free: index >= tree_size -> PlanError::IndexOutOfRange; all shifts
+  guarded so any u64 tree_size is safe; impossible internal geometry ->
+  PlanError::TileGeometry, never a panic (§19.8).
+
+Open questions:
+- 2^20 coverage: the property test runs proptest to N=2048, deterministic
+  boundaries, and level-2 cases to N=2^18 (including the slot_count=2 multi-slot
+  level-2 run, crypto F1). A literal N=2^20 sweep exists as an #[ignore]d test
+  (`cargo test -- --ignored`, or a release CI lane) so the claim is falsifiable
+  in-repo; it is out of the default gate only for debug-build speed.
+- CODEMAP.md and Cargo.lock regenerated centrally at merge (coordinator).

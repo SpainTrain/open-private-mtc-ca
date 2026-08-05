@@ -17,6 +17,24 @@
 //! [`verify_inclusion`] performs all three and returns a [`Verified`] witness on
 //! success, or a typed [`VerifyError`] naming exactly which step failed and why.
 //!
+//! # Scope — what the caller MUST still check (read this before embedding)
+//!
+//! [`verify_inclusion`] proves the entry is in *a* tree whose `(tree_size,
+//! root_hash)` this CA key signed. It deliberately does **not** bind two fields
+//! of the checkpoint, which remain the caller's responsibility:
+//!
+//! - **`log_id` / trust anchor is NOT bound.** A checkpoint signed by the same
+//!   CA key for a *different* log, over the same root, will verify here. The
+//!   `log_id` / trust-anchor binding is part of the certificate layer (spec
+//!   §12.1 steps 1-3, 7; ticket `read-verify-cert`), not steps 4-6. So the
+//!   caller MUST confirm the checkpoint belongs to the expected log —
+//!   [`Verified::log_id`] returns the checkpoint's `log_id` precisely so callers
+//!   can perform that binding.
+//! - **`signed_at` is unauthenticated.** The checkpoint timestamp is not part of
+//!   the signed `MTCSubtreeSignatureInput` (draft §5.4.1), so it must **not** be
+//!   used for freshness/recency decisions. Freshness comes from the landmark /
+//!   checkpoint-distribution layer, not from this signature.
+//!
 //! # v1 algorithms (spec §4, §14.1)
 //!
 //! The tree hash is SHA-256 ([`mtc::Sha256Hasher`]) and the checkpoint signature
@@ -75,6 +93,9 @@
 //! let verified = verify_inclusion(&entries[3], &proof, &checkpoint, &ca_pubkey)?;
 //! assert_eq!(verified.leaf_index(), index);
 //! assert_eq!(verified.root_hash(), tree.root());
+//! // The caller must still confirm this is the expected log (log_id is not
+//! // bound by verify_inclusion — see the "Scope" note).
+//! assert_eq!(verified.log_id().as_str(), "demo-log");
 //! # use mtc::{Claim, DnsName, SubjectInfoHash, SubjectType, TbsCertificateLogEntry, TlsSerialize};
 //! # fn sample_entry(i: u8) -> TbsCertificateLogEntry {
 //! #     TbsCertificateLogEntry::builder()
@@ -89,8 +110,8 @@
 use thiserror::Error;
 
 use mtc::{
-    Checkpoint, EcdsaP256, HashOutput, InclusionProof, Index, LogEntry, ProofError, Sha256Hasher,
-    Signed, TreeSize, VerifyingKey,
+    Checkpoint, EcdsaP256, HashOutput, InclusionProof, Index, LogEntry, LogId, ProofError,
+    Sha256Hasher, Signed, TreeSize, VerifyingKey,
 };
 
 /// Proof that an entry's inclusion in a signed checkpoint was fully verified
@@ -100,17 +121,35 @@ use mtc::{
 /// the inclusion proof reconstructed the checkpoint's committed root, and the
 /// CA's checkpoint signature verified. Holding a `Verified` is therefore
 /// evidence all three checks passed; it carries the committed facts the caller
-/// can rely on downstream (the tree size, the leaf index, and the root the
-/// checkpoint committed to).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// can rely on downstream (the checkpoint's `log_id`, the tree size, the leaf
+/// index, and the root the checkpoint committed to).
+///
+/// The [`log_id`](Self::log_id) is surfaced so the caller can complete the
+/// binding this core does not do (see the crate-level "Scope" note): the
+/// signature covers `log_id`, but `verify_inclusion` does not check that it is
+/// the *expected* log, so the caller must compare [`Verified::log_id`] against
+/// the log it expected.
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[must_use = "a Verified witness records a successful verification; dropping it discards the result"]
 pub struct Verified {
+    log_id: LogId,
     tree_size: TreeSize,
     leaf_index: Index,
     root_hash: HashOutput,
 }
 
 impl Verified {
+    /// The `log_id` (trust-anchor id) the verified checkpoint commits to.
+    ///
+    /// `verify_inclusion` proves the signature covers this `log_id` but does
+    /// **not** check it is the log the caller expected — comparing it to the
+    /// expected log is the caller's binding step (crate-level "Scope" note;
+    /// ticket `read-verify-cert`).
+    #[must_use]
+    pub const fn log_id(&self) -> &LogId {
+        &self.log_id
+    }
+
     /// The tree size the verified checkpoint commits to (equal to the proof's
     /// tree size — [`verify_inclusion`] rejects a mismatch).
     #[must_use]
@@ -242,6 +281,15 @@ impl VerifyError {
 /// order does not affect the security conclusion — the spec's ordering is
 /// followed for readability.
 ///
+/// # Not checked here (caller's responsibility)
+///
+/// This binds the entry to a `(tree_size, root_hash)` **this CA key signed**, but
+/// it does **not** bind the checkpoint's `log_id` — a same-key checkpoint for a
+/// *different* log over the same root will verify. Confirm the log via
+/// [`Verified::log_id`] (see the crate-level "Scope" note). The checkpoint's
+/// `signed_at` is unauthenticated (draft §5.4.1) and must not be used for
+/// freshness.
+///
 /// # Errors
 ///
 /// Returns the [`VerifyError`] naming the first failing check:
@@ -289,6 +337,7 @@ pub fn verify_inclusion(
         .map_err(|_| VerifyError::BadSignature)?;
 
     Ok(Verified {
+        log_id: checkpoint.log_id().clone(),
         tree_size: checkpoint_size,
         leaf_index: proof.leaf_index(),
         root_hash: *checkpoint.root_hash(),
@@ -376,7 +425,41 @@ mod tests {
             assert_eq!(verified.leaf_index(), Index(i as u64));
             assert_eq!(verified.tree_size(), TreeSize(9));
             assert_eq!(verified.root_hash(), tree.root());
+            // Verified exposes the checkpoint's log_id for the caller's binding.
+            assert_eq!(verified.log_id(), &LogId::new("test-log").unwrap());
         }
+    }
+
+    #[test]
+    fn log_id_is_not_bound_but_is_surfaced_for_the_caller() {
+        // Crypto F2 boundary (deliberate, documented): verify_inclusion binds
+        // the entry to a (tree_size, root_hash) THIS CA KEY signed, but does NOT
+        // check the checkpoint's log_id. A same-key checkpoint for a DIFFERENT
+        // log over the SAME root therefore verifies — the caller distinguishes
+        // logs via Verified::log_id(). Binding the expected log is read-verify-cert.
+        let (entries, tree) = log_of(8);
+        let (signing, verifying) = EcdsaP256::generate_keypair();
+        let cp_for = |log: &str| {
+            CheckpointBuilder::new(LogId::new(log).unwrap())
+                .root_hash(tree.root())
+                .tree_size(tree.len())
+                .signed_at(SignedAt(0))
+                .build()
+                .sign(&EcdsaP256, &signing)
+                .unwrap()
+        };
+        let cp_a = cp_for("log-A");
+        let cp_b = cp_for("log-B"); // different log, same key, same root
+        let proof = InclusionProof::generate(&tree, Index(3)).unwrap();
+
+        // Both verify (log_id is not bound here)...
+        let va = verify_inclusion(&entries[3], &proof, &cp_a, &verifying).unwrap();
+        let vb = verify_inclusion(&entries[3], &proof, &cp_b, &verifying).unwrap();
+        // ...but Verified reports each checkpoint's own log_id, so a caller that
+        // expected "log-A" can reject the "log-B" checkpoint.
+        assert_eq!(va.log_id().as_str(), "log-A");
+        assert_eq!(vb.log_id().as_str(), "log-B");
+        assert_ne!(va.log_id(), vb.log_id());
     }
 
     #[test]
