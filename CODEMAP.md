@@ -125,6 +125,7 @@ CRATE: dev-replicator
 CRATE: mtc
   PURPOSE: Core Merkle Tree Certificate domain newtypes and spec primitive types (clean-room, draft-ietf-plants-merkle-tree-certs)
   PUBLIC API:
+    - mod checkpoint
     - mod error
     - mod log_entry
     - mod proof
@@ -132,6 +133,18 @@ CRATE: mtc
     - mod tree
     - mod types
     - mod wire
+    - subtree_signature_input
+    - trust_anchor_id_len_byte
+    - struct Checkpoint
+    - CheckpointBuilder
+    - enum CheckpointParseError
+    - enum CheckpointSignError
+    - enum CheckpointVerifyError
+    - struct Signed
+    - struct SignedAt
+    - TrustAnchorIdError
+    - struct Unsigned
+    - SUBTREE_SIGNATURE_LABEL
     - enum HashOutputError
     - enum IdError
     - fn null_entry
