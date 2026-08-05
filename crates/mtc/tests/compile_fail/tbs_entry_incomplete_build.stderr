@@ -1,0 +1,7 @@
+error[E0599]: no method named `build` found for struct `TbsCertificateLogEntryBuilder` in the current scope
+  --> tests/compile_fail/tbs_entry_incomplete_build.rs:11:52
+   |
+11 |     let _entry = TbsCertificateLogEntry::builder().build();
+   |                                                    ^^^^^ method not found in `TbsCertificateLogEntryBuilder`
+   |
+   = note: the method was found for `TbsCertificateLogEntryBuilder<SubjectType, SubjectInfoHash>`

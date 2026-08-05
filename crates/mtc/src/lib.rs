@@ -33,12 +33,18 @@
 #![allow(clippy::multiple_crate_versions)]
 
 pub mod error;
+pub mod log_entry;
 pub mod signing;
 pub mod tree;
 pub mod types;
 pub mod wire;
 
 pub use error::{HashOutputError, IdError};
+pub use log_entry::{
+    null_entry, Claim, ClaimType, DnsName, EntryError, LogEntry, NoSubjectInfoHash, NoSubjectType,
+    SubjectInfoHash, SubjectType, TbsCertificateLogEntry, TbsCertificateLogEntryBuilder,
+    TlsSubjectInfo,
+};
 pub use signing::{
     scheme_for, EcdsaP256, KeyRejected, SignError, Signature, SignatureAlgorithm, SignatureScheme,
     SigningKey, UnknownAlgorithm, UnsupportedAlgorithm, VerifyError, VerifyingKey,
