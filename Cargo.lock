@@ -2372,6 +2372,24 @@ name = "mtc-placeholder"
 version = "0.0.0"
 
 [[package]]
+name = "mtc-read"
+version = "0.1.0"
+dependencies = [
+ "mtc",
+ "proptest",
+ "thiserror",
+]
+
+[[package]]
+name = "mtc-verify"
+version = "0.1.0"
+dependencies = [
+ "mtc",
+ "proptest",
+ "thiserror",
+]
+
+[[package]]
 name = "multer"
 version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

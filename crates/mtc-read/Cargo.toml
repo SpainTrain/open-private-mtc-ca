@@ -1,0 +1,36 @@
+# Read-path service core (read-path epic, ticket read-tile-plan).
+#
+# The proof-server side of spec §12: turning a checkpoint's (tree_size, index)
+# into the storage/tile reads and hash assembly that produce a proof. This
+# ticket lands the pure tile *planner* (§12.2 step 3); tile fetching, proof
+# construction, and the HTTP surface arrive in sibling read-path tickets
+# (read-proof-gen-core, read-proof-server-lambda) that build on this crate.
+#
+# Distinct from `mtc-verify`: that crate is the minimal relying-party verifier;
+# this crate is the service-side proof-assembly machinery. Both depend only on
+# the core `mtc` domain crate for the tile geometry and Merkle math.
+[package]
+name = "mtc-read"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+description = "MTC read-path service core: inclusion-proof tile planner mapping (tree_size, index) to tile coordinates and intra-tile hash slots (spec §12.2 step 3)"
+
+[dependencies]
+# Core MTC domain crate: tile geometry (TileCoord, tile_width,
+# tiles_for_inclusion), range decomposition, and the Merkle tree math.
+mtc = { path = "../mtc" }
+# Typed library error enum (rule `thiserror-for-libs-eyre-for-bins`).
+thiserror = { workspace = true }
+
+[dev-dependencies]
+# Property test (spec §19.2): hashes extracted per the plan from real tiles
+# reproduce exactly the inclusion proof `mtc` computes directly. Workspace-pinned.
+proptest = { workspace = true }
+
+[lints]
+workspace = true

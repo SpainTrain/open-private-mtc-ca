@@ -222,7 +222,7 @@ CRATE: mtc
     - WireError
     - struct U24
   DEPENDS ON: (none)
-  USED BY: mtc-conformance
+  USED BY: mtc-conformance, mtc-read, mtc-verify
 
 CRATE: mtc-admin-api-client
   PURPOSE: Administrative HTTP+JSON API for the Merkle Tree Certificate CA (spec §17.2). Consumed by `mtcctl` (via the generated Rust client) and the admin UI. Seed surface: health endpoints (§20.5) and a minimal service status endpoint (§17.3).
@@ -296,6 +296,26 @@ CRATE: mtc-placeholder
   PUBLIC API:
     - fn marker
   DEPENDS ON: (none)
+  USED BY: (none)
+
+CRATE: mtc-read
+  PURPOSE: MTC read-path service core: inclusion-proof tile planner mapping (tree_size, index) to tile coordinates and intra-tile hash slots (spec §12.2 step 3)
+  PUBLIC API:
+    - struct TileSlotRun
+    - struct PathStep
+    - struct TilePlan
+    - enum PlanError
+    - fn plan_inclusion
+  DEPENDS ON: mtc
+  USED BY: (none)
+
+CRATE: mtc-verify
+  PURPOSE: Relying-party MTC verification core: leaf hash, inclusion-proof application, and ECDSA P-256 checkpoint-signature verification (spec §12.1 steps 4-6)
+  PUBLIC API:
+    - struct Verified
+    - enum VerifyError
+    - fn verify_inclusion
+  DEPENDS ON: mtc
   USED BY: (none)
 
 CRATE: retention
