@@ -127,6 +127,7 @@ CRATE: mtc
   PUBLIC API:
     - mod error
     - mod log_entry
+    - mod proof
     - mod signing
     - mod tree
     - mod types
@@ -146,6 +147,9 @@ CRATE: mtc
     - TbsCertificateLogEntry
     - TbsCertificateLogEntryBuilder
     - TlsSubjectInfo
+    - ConsistencyProof
+    - InclusionProof
+    - enum ProofError
     - fn scheme_for
     - EcdsaP256
     - enum KeyRejected
@@ -166,6 +170,7 @@ CRATE: mtc
     - MerkleTree
     - Sha256Hasher
     - Subtree
+    - SubtreeError
     - LEAF_PREFIX
     - NODE_PREFIX
     - SHA256_EMPTY_ROOT

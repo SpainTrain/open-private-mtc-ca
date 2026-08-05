@@ -154,3 +154,66 @@ Decisions:
 
 Open questions:
 - (none new; the pre-existing clock crate non-tokio-feature clippy gotcha noted in the memory-backend/dev-crr-replication-sim journal entries was not reproduced during this ticket's `cargo clippy --workspace --all-targets --quiet -- -D warnings` runs -- appears already resolved on this worktree's base commit.)
+## 2026-08-04 — mtclib-inclusion-proofs (+ folded mtc-qka.2): Merkle inclusion/consistency proofs and Subtree hardening
+
+**Ticket**: mtclib-inclusion-proofs (folds in mtc-qka.2)
+**PR**: —
+
+Decisions:
+- Proofs live in crates/mtc/src/proof/ (InclusionProof, ConsistencyProof,
+  ProofError), implemented clean-room from the RFC 9162 constructions
+  draft-ietf-plants-merkle-tree-certs-03 adopts: inclusion §2.1.3.1/§2.1.3.2,
+  consistency §2.1.4.1/§2.1.4.2. Generation reads sibling hashes via the
+  existing MerkleTree::subtree_hash (domain-separated MTH) — no second hashing
+  path; verification recomputes with hash_node from tree/digest.rs.
+- Verification validates shape BEFORE hashing (crypto crown-jewel): out-of-range
+  index, non-monotonic sizes (old > new), and exact path-length mismatch are
+  rejected as typed ProofError with no hashing and no panic. Inclusion uses the
+  RFC fn/sn reconstruction; consistency the node/last two-root reconstruction.
+  old==0 handled (empty tree is a prefix of everything; old_root must equal
+  empty_root); old==new handled (roots must match).
+- Post-review fix (crypto F1): the m==0 arm is checked before m==n, so the
+  degenerate (0,0) pair must ALSO require new_root==empty_root — otherwise
+  "same size => same root" is unenforced at size 0 and a garbage new_root rides
+  an empty proof. Added the n==0 new_root==empty_root check in the m==0 arm plus
+  a regression test (verify(proof(0,0,[]), empty_root, garbage) => RootMismatch).
+- Proof wire format (clean-room TLS presentation, RFC 9162 §2.1.3/§2.1.4 shape):
+  { uint64 size(s); NodeHash path<0..2^16-1> } with NodeHash = opaque[32].
+  Round-trips through the mtc wire framework (TlsSerialize/TlsParse over the
+  bounded TlsReader). The framework has no native uint64 yet, so u64 fields are
+  composed locally from TlsReader::read_array::<8>() / write_bytes(&be_bytes)
+  rather than editing the shared wire reader/writer — this deliberately avoids a
+  duplicate-uint64 definition colliding at merge with the parallel
+  checkpoint/tiles/log-entries beads. A shared uint64 wire primitive is filed as
+  discovered work.
+- crypto F3 (mtc-qka.3) minimum-length: the proof path vector has NO positive
+  wire minimum — empty paths are valid (single-leaf inclusion; old==0/old==new
+  consistency) — so no hand-enforced floor is added at parse; the exact semantic
+  length is enforced in verify(). Documented in both codecs.
+
+Subtree hardening (mtc-qka.2 — alignment/inversion invariant):
+- Root cause (crypto-tree-primitives flag): Subtree::new enforced nothing and
+  Subtree::len computed end-start, which wraps in release for an inverted range.
+- Fix: Subtree::new now debug_assert!(start <= end) (panics in debug/test, so an
+  inverted range is unconstructable in CI); Subtree::len uses saturating_sub so
+  even a release-built inverted range yields 0, never a wrapped near-u64::MAX
+  length. Added fallible Subtree::try_new (rejects inversion) and
+  Subtree::try_aligned (rejects inversion + empty + non-power-of-two +
+  misalignment), returning the new SubtreeError enum.
+- Alignment-invariant decision: decompose_range keeps emitting blocks through the
+  fast unchecked const new (its outputs are provably aligned), while any range
+  derived from untrusted input must go through try_new/try_aligned. A property
+  test asserts every decompose_range block round-trips through try_aligned.
+
+Verification: cargo test -p mtc (107 unit + integration + doc tests) green;
+cargo fmt --all --check clean; cargo clippy -p mtc --all-targets --all-features
+(and default) -D warnings clean; workspace clippy --all-features clean; example
+prove_and_verify issues+verifies an inclusion and a consistency proof and shows
+tamper rejection.
+
+Open questions:
+- Wire framework lacks a native uint64 codec; proofs (and, imminently,
+  checkpoint/tiles) compose it locally. Worth a shared primitive once the
+  parallel crates/mtc beads merge — bead candidate.
+- Kani harnesses for the proof primitives are a separate ticket
+  (mtclib-kani-harnesses); property tests are the AC here (spec §19.2).

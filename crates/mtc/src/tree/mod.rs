@@ -23,7 +23,7 @@ pub mod decomposition;
 pub mod digest;
 
 pub use builder::MerkleTree;
-pub use decomposition::{decompose_range, Subtree};
+pub use decomposition::{decompose_range, Subtree, SubtreeError};
 pub use digest::{
     empty_root, hash_leaf, hash_node, Hasher, Sha256Hasher, LEAF_PREFIX, NODE_PREFIX,
     SHA256_EMPTY_ROOT,

@@ -34,6 +34,7 @@
 
 pub mod error;
 pub mod log_entry;
+pub mod proof;
 pub mod signing;
 pub mod tree;
 pub mod types;
@@ -45,13 +46,14 @@ pub use log_entry::{
     SubjectInfoHash, SubjectType, TbsCertificateLogEntry, TbsCertificateLogEntryBuilder,
     TlsSubjectInfo,
 };
+pub use proof::{ConsistencyProof, InclusionProof, ProofError};
 pub use signing::{
     scheme_for, EcdsaP256, KeyRejected, SignError, Signature, SignatureAlgorithm, SignatureScheme,
     SigningKey, UnknownAlgorithm, UnsupportedAlgorithm, VerifyError, VerifyingKey,
 };
 pub use tree::{
     decompose_range, empty_root, hash_leaf, hash_node, Hasher, MerkleTree, Sha256Hasher, Subtree,
-    LEAF_PREFIX, NODE_PREFIX, SHA256_EMPTY_ROOT,
+    SubtreeError, LEAF_PREFIX, NODE_PREFIX, SHA256_EMPTY_ROOT,
 };
 pub use types::{BatchId, BatchTag, Epoch, HashOutput, Id, Index, LogId, LogTag, TreeSize};
 pub use wire::{TlsParse, TlsReader, TlsSerialize, WireError, U24};
