@@ -132,6 +132,32 @@ skip = [
     # docs/license-policy.md.
     { crate = "frunk_core@0.4", reason = "frunk 0.4.4 (admin-api-server's optional `conversion` feature) depends on frunk_core 0.4.4 -- see docs/license-policy.md" },
     { crate = "frunk_core@0.5", reason = "frunk-enum-derive/frunk_derives/frunk_proc_macros (same `conversion` feature) depend on frunk_core 0.5.0 -- see docs/license-policy.md" },
+
+    # Same RustCrypto-vs-rand version skew described in the getrandom block:
+    # the RustCrypto p256/ecdsa/elliptic-curve chain depends on rand_core 0.6,
+    # while the newer rand 0.9 line (proptest dev-dep, acme-core) uses
+    # rand_core 0.9. Build-time/dev + crypto-RNG plumbing, no added license or
+    # advisory surface. Tracked, not silenced: drop once RustCrypto moves to
+    # rand_core 0.9. See docs/license-policy.md.
+    { crate = "rand_core@0.6", reason = "RustCrypto p256/ecdsa/elliptic-curve chain depends on rand_core 0.6 -- see docs/license-policy.md" },
+    { crate = "rand_core@0.9", reason = "rand 0.9 line (proptest, acme-core) depends on rand_core 0.9 -- see docs/license-policy.md" },
+]
+
+# `skip-tree` skips duplicate *sub-trees* rooted at a crate, for cases where a
+# single dependency drags in a whole parallel stack. The `dev-replicator` crate
+# (a dev-only, laptop-only S3 CRR / DynamoDB replication simulator -- spec §1
+# non-goals + §18.3, never shipped to any production artifact) depends on the
+# AWS SDK, whose runtime (aws-smithy-*, hyper 0.14 / http 0.2 / rustls 0.21-era,
+# and an older RustCrypto generation: sha2/digest/crypto-common/block-buffer/
+# hmac/sha1/const-oid/cpufeatures) duplicates the main crypto path's newer
+# p256 0.13 / sha2 0.10 stack. This is version skew inside the AWS SDK's own
+# transitive tree, not something this workspace controls, and it is confined to
+# a dev tool. Tracked, not silenced: drop these once the AWS SDK re-aligns on
+# the newer hyper/rustls/RustCrypto lines. See docs/license-policy.md.
+skip-tree = [
+    { crate = "aws-sdk-s3", reason = "dev-only dev-replicator AWS SDK stack (rustls/hyper/http + older RustCrypto) -- see docs/license-policy.md" },
+    { crate = "aws-sdk-dynamodb", reason = "same dev-replicator AWS SDK stack -- see docs/license-policy.md" },
+    { crate = "aws-config", reason = "shared AWS SDK runtime root pulled by dev-replicator -- see docs/license-policy.md" },
 ]
 
 # -----------------------------------------------------------------------------
