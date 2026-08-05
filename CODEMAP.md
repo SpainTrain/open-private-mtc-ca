@@ -222,7 +222,7 @@ CRATE: mtc
     - WireError
     - struct U24
   DEPENDS ON: (none)
-  USED BY: (none)
+  USED BY: mtc-conformance
 
 CRATE: mtc-admin-api-client
   PURPOSE: Administrative HTTP+JSON API for the Merkle Tree Certificate CA (spec §17.2). Consumed by `mtcctl` (via the generated Rust client) and the admin UI. Seed surface: health endpoints (§20.5) and a minimal service status endpoint (§17.3).
@@ -249,6 +249,21 @@ CRATE: mtc-admin-api-tests
   PUBLIC API:
     (none)
   DEPENDS ON: mtc-admin-api-client, mtc-admin-api-server
+  USED BY: (none)
+
+CRATE: mtc-conformance
+  PURPOSE: Spec conformance test-vector loader and runner for the mtc crate (spec §19.4)
+  PUBLIC API:
+    - mod hex
+    - mod loader
+    - mod runner
+    - mod schema
+    - fn discover_vector_files
+    - fn load_vector_file
+    - enum LoadError
+    - fn evaluate
+    - enum Vector
+  DEPENDS ON: mtc
   USED BY: (none)
 
 CRATE: mtc-metrics

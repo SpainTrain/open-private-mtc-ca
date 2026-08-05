@@ -1,0 +1,10 @@
+{
+  "kind": "checkpoint",
+  "id": "checkpoint-reject-trailing-bytes",
+  "description": "Must-reject. checkpoint-accept-001's real serialized bytes with one stray byte (0x99) appended — TlsReader::finish rejects any unconsumed suffix after a structurally complete checkpoint.",
+  "wire_hex": "0a70726f642d6c6f672d3100000000000030397f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f000000006553f10000405cef3fd7a6a284fc703349083ebd0772a0c4ce81928810637ed8d9ac4dec207877d4b69178fe56123c41288a39549509f8947f41dbebd330e0ec432555bf95a599",
+  "parse": {
+    "outcome": "reject",
+    "error_class": "TrailingBytes"
+  }
+}

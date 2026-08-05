@@ -1,0 +1,15 @@
+{
+  "kind": "log_entry",
+  "id": "log-entry-accept-certificate",
+  "description": "Happy path. A TbsCertificateLogEntry (subject_type = tls, a fixed subject_info_hash, one dns claim for \"example.com\") wrapped as LogEntry::Certificate and serialized with tls_serialize_to_vec.",
+  "wire_hex": "00010000111111111111111111111111111111111111111111111111111111111111111100120000000e000c0b6578616d706c652e636f6d",
+  "parse": {
+    "outcome": "accept",
+    "fields": {
+      "variant": "certificate",
+      "subject_type": "tls",
+      "subject_info_hash_hex": "1111111111111111111111111111111111111111111111111111111111111111",
+      "claim_count": 1
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "kind": "checkpoint",
+  "id": "checkpoint-reject-empty-trust-anchor-id",
+  "description": "Must-reject. A single 0x00 length-prefix byte for the TrustAnchorID (log id) field: below the draft's opaque<1..2^8-1> minimum of 1 byte. Not derived from a serializer call (no valid Checkpoint is this short) — this is the exact byte sequence crates/mtc/src/checkpoint/mod.rs's own parse_rejects_empty_trust_anchor_id unit test already asserts is correct, reused rather than invented.",
+  "wire_hex": "00",
+  "parse": {
+    "outcome": "reject",
+    "error_class": "TrustAnchorIdEmpty"
+  }
+}

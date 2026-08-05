@@ -1,0 +1,10 @@
+{
+  "kind": "checkpoint",
+  "id": "checkpoint-reject-non-utf8-log-id",
+  "description": "Must-reject. TrustAnchorID length prefix 0x01 followed by the single byte 0xFF, which is not valid UTF-8. Reuses the exact byte sequence crates/mtc/src/checkpoint/mod.rs's own parse_rejects_non_utf8_log_id unit test asserts is correct.",
+  "wire_hex": "01ff",
+  "parse": {
+    "outcome": "reject",
+    "error_class": "LogIdNotUtf8"
+  }
+}

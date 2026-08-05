@@ -299,3 +299,21 @@ Open questions:
   equivalent underlying libFuzzer binary was run directly instead (see
   Verification). CI or a dev machine with cargo-fuzz should still run the
   literal command periodically per spec §19.3.
+
+## 2026-08-05 — test-conformance-runner: JSON+hex conformance vector format, substring error_class matching, generator-not-hand-hex seeding
+
+**Ticket**: test-conformance-runner
+**PR**: —
+
+Decisions:
+- Vector format: one JSON file per vector under conformance/vectors/<kind>/, an internally-tagged Vector enum (kind = checkpoint | inclusion_proof | log_entry) so serde dispatches to a kind-specific fields/verify shape rather than a stringly-typed generic blob. wire_hex is lowercase hex, no 0x/separators.
+- error_class (must-reject vectors) is matched as a substring of the actual error's {:?} (Debug) rendering, not full structural equality. Chosen so a vector names just the fired variant ("TrailingBytes", "RootMismatch", ...) without reproducing its offset/length payload, and so nested composite errors (CheckpointParseError::Wire(WireError::TrailingBytes{..})) still match on the inner variant name. Documented in conformance/vectors/README.md.
+- Seed vectors are generator output, not hand-authored hex: crates/conformance/examples/generate_vectors.rs builds real Checkpoint/InclusionProof/LogEntry values via the actual mtc serializers (fixed RFC 6979 Appendix A.2.5 KAT key for reproducible signing) and writes the vector JSON directly. Reject vectors are either a small in-code mutation of real bytes (append/truncate/bit-flip) or, for the two vectors too short to come from any real Checkpoint (empty trust-anchor-id, non-UTF-8 log id), the exact byte sequences crates/mtc/src/checkpoint/mod.rs's own unit tests already assert correct.
+- No new CI wiring needed: crates/conformance is an ordinary workspace member with an ordinary #[test], so it rides the existing `cargo test --workspace --all-features` required check (spec §22.13) automatically. mk/test.mk's pre-existing test-conformance stub now runs it (--nocapture, so the demo's per-vector pass/fail + total-count output always prints); added a `conformance` alias matching the ticket's literal demo wording.
+- Byte-exact conformance against the draft-ietf-plants-merkle-tree-certs-03 text itself is explicitly out of scope here (bead mtc-qka.5, separate tracked obligation); this suite is clean-room only (self-consistency of our own serializer/parser), and is the harness mtc-qka.5's draft-derived vectors will slot into later — see conformance/README.md and vectors/README.md.
+
+Verification: `cargo test -p mtc-conformance --all-features` green (14 lib unit tests + 2 integration tests + 0 doctests), prints "conformance suite: 10 passed, 0 failed, 10 total"; `cargo test --workspace --all-features` green; `cargo fmt --all --check` clean; `cargo clippy --workspace --all-targets --all-features -- -D warnings` clean; `make codemap` regenerated cleanly.
+
+Open questions:
+- `cargo deny check` bans currently fails on pre-existing duplicate crate-version findings (block-buffer/const-oid/cpufeatures/etc., p256 vs aws-sdk-s3's own transitive deps) unrelated to this ticket — predates this change (dev-replicator's aws-sdk deps), owned by dependency reconciliation.
+- This worktree branched before wave-3a's mtclib-checkpoint/inclusion-proofs/log-entries/tiles merges landed on main; merged local main into this branch first to pick up the crates/mtc types this ticket needed to study and build against.

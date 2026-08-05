@@ -2342,6 +2342,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtc-conformance"
+version = "0.1.0"
+dependencies = [
+ "eyre",
+ "mtc",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "mtc-metrics"
 version = "0.1.0"
 dependencies = [
