@@ -553,6 +553,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn header_member_rejected_returns_malformed_problem() {
+        // RFC 8555 §6.2: a validly-signed flattened body plus a top-level
+        // "header" member (the unprotected header) must be rejected as
+        // malformed at the route level, not merged in or ignored
+        // (mtc-1hp.1).
+        let app = router(test_state());
+        let key = test_key(1);
+        let nonce = fetch_nonce(&app).await;
+        let mut parsed: serde_json::Value =
+            serde_json::from_str(&new_account_body(&key, &nonce)).expect("json");
+        parsed["header"] = serde_json::json!({"kid": "evil"});
+        let (status, _, body) = send(&app, post_new_account(parsed.to_string())).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["type"], "urn:ietf:params:acme:error:malformed");
+    }
+
+    #[tokio::test]
     async fn garbage_body_is_malformed() {
         let app = router(test_state());
         let (status, headers, body) =
