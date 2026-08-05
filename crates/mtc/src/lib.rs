@@ -32,12 +32,18 @@
 // duplication there is the integrator's concern, not this library's API.
 #![allow(clippy::multiple_crate_versions)]
 
+pub mod checkpoint;
 pub mod error;
 pub mod signing;
 pub mod tree;
 pub mod types;
 pub mod wire;
 
+pub use checkpoint::{
+    subtree_signature_input, trust_anchor_id_len_byte, Checkpoint, CheckpointBuilder,
+    CheckpointParseError, CheckpointSignError, CheckpointVerifyError, Signed, SignedAt,
+    TrustAnchorIdError, Unsigned, SUBTREE_SIGNATURE_LABEL,
+};
 pub use error::{HashOutputError, IdError};
 pub use signing::{
     scheme_for, EcdsaP256, KeyRejected, SignError, Signature, SignatureAlgorithm, SignatureScheme,

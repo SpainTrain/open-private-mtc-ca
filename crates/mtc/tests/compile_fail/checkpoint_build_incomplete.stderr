@@ -1,0 +1,14 @@
+error[E0599]: no method named `build` found for struct `CheckpointBuilder<WithRootHash, WithTreeSize>` in the current scope
+  --> tests/compile_fail/checkpoint_build_incomplete.rs:14:10
+   |
+10 |       let _checkpoint = CheckpointBuilder::new(LogId::new("ca").unwrap())
+   |  _______________________-
+11 | |         .root_hash(HashOutput([0u8; 32]))
+12 | |         .tree_size(TreeSize(1))
+13 | |         // .signed_at(..) deliberately omitted — `build` is not available yet.
+14 | |         .build();
+   | |         -^^^^^ method not found in `CheckpointBuilder<WithRootHash, WithTreeSize>`
+   | |_________|
+   |
+   |
+   = note: the method was found for `CheckpointBuilder<WithRootHash, WithTreeSize, WithSignedAt>`
