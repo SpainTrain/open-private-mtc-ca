@@ -125,7 +125,16 @@ fn decode_coordinate(name: &str, value: &str) -> Result<[u8; 32], AcmeError> {
 }
 
 /// The JWS protected header fields ACME cares about (RFC 8555 §6.2).
+///
+/// `deny_unknown_fields` is a deliberate allowlist, not an oversight: RFC
+/// 7515 §4.1.11 requires rejecting a JWS whose `crit` lists extensions the
+/// recipient does not implement (this server implements none), and RFC 8555
+/// §6.2 forbids the RFC 7797 `b64` option. Neither `crit` nor `b64` — nor any
+/// other extension header parameter — is a recognized member below, so any
+/// of them appearing fails deserialization and the request is rejected as
+/// `malformed`.
 #[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct ProtectedHeader {
     /// Signature algorithm. Only `ES256` is accepted.
     pub alg: String,
@@ -155,7 +164,14 @@ pub enum AccountKeySource<'a> {
 }
 
 /// Flattened JSON JWS envelope (RFC 7515 §7.2.2).
+///
+/// `deny_unknown_fields`: RFC 8555 §6.2 — the unencoded, top-level JWS
+/// "header" member (the general-JSON-serialization unprotected header) MUST
+/// NOT be used. ACME's flattened shape is exactly `protected` / `payload` /
+/// `signature`; any other top-level member (`header` included) is rejected
+/// rather than silently ignored.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct FlattenedJws {
     protected: String,
     payload: String,
@@ -480,6 +496,89 @@ mod tests {
             jws.account_key(),
             Ok(AccountKeySource::Kid("https://ca.example/acme/acct/7"))
         );
+    }
+
+    #[test]
+    fn header_member_rejected() {
+        // RFC 8555 §6.2: the unprotected JWS header MUST NOT be used. A
+        // validly-signed flattened body carrying a top-level "header"
+        // member alongside protected/payload/signature must be rejected
+        // outright, not silently ignored (mtc-1hp.1).
+        let key = test_key(1);
+        let body = signed_request_body(
+            &key,
+            &ClientBinding::Jwk,
+            "some-nonce",
+            "https://ca.example/acme/new-account",
+            &serde_json::json!({"termsOfServiceAgreed": true}),
+        )
+        .expect("signable");
+        let mut parsed: serde_json::Value = serde_json::from_str(&body).expect("json");
+        parsed["header"] = serde_json::json!({"kid": "evil"});
+        assert!(matches!(
+            Jws::parse(parsed.to_string().as_bytes()),
+            Err(AcmeError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn protected_header_strict_rejects_crit() {
+        // RFC 7515 §4.1.11: a JWS whose protected header lists "crit"
+        // extensions MUST be rejected unless every extension is understood;
+        // this server implements none, so any "crit" member is fatal
+        // (mtc-1hp.2).
+        let protected = Base64UrlUnpadded::encode_string(
+            br#"{"alg":"ES256","nonce":"n","url":"u","crit":["exp"]}"#,
+        );
+        let body = serde_json::json!({
+            "protected": protected,
+            "payload": "",
+            "signature": "",
+        })
+        .to_string();
+        assert!(matches!(
+            Jws::parse(body.as_bytes()),
+            Err(AcmeError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn protected_header_strict_rejects_b64() {
+        // RFC 8555 §6.2 forbids the RFC 7797 JWS Unencoded Payload Option
+        // ("b64") in ACME protected headers (mtc-1hp.2).
+        let protected = Base64UrlUnpadded::encode_string(
+            br#"{"alg":"ES256","nonce":"n","url":"u","b64":false}"#,
+        );
+        let body = serde_json::json!({
+            "protected": protected,
+            "payload": "",
+            "signature": "",
+        })
+        .to_string();
+        assert!(matches!(
+            Jws::parse(body.as_bytes()),
+            Err(AcmeError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn protected_header_strict_rejects_unknown_param() {
+        // Any protected-header member outside the ACME-recognized set
+        // (alg/nonce/url/jwk/kid) is rejected rather than silently ignored
+        // (mtc-1hp.2).
+        let protected = Base64UrlUnpadded::encode_string(
+            br#"{"alg":"ES256","nonce":"n","url":"u","x5u":"https://evil.example/cert"}"#,
+        );
+        let body = serde_json::json!({
+            "protected": protected,
+            "payload": "",
+            "signature": "",
+        })
+        .to_string();
+        assert!(matches!(
+            Jws::parse(body.as_bytes()),
+            Err(AcmeError::Malformed(_))
+        ));
     }
 
     #[test]
