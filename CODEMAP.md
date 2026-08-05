@@ -52,7 +52,7 @@ CRATE: clock
     - trait Clock
     - struct SystemClock
   DEPENDS ON: (none)
-  USED BY: acme-core, cloud-memory, dev-replicator
+  USED BY: acme-core, cloud-memory, dev-replicator, retention
 
 CRATE: cloud-memory
   PURPOSE: Pure in-memory implementations of the cloud-types traits (ObjectStore, ObjectLock, ReplicatedKv, Hsm) for zero-dependency unit tests and local dev (spec §9.3, §9.6)
@@ -62,7 +62,7 @@ CRATE: cloud-memory
     - struct MemoryObjectStore
     - struct MemoryReplicatedKv
   DEPENDS ON: clock, cloud-types
-  USED BY: (none)
+  USED BY: retention
 
 CRATE: cloud-types
   PURPOSE: Cloud-agnostic capability traits (ObjectStore, ObjectLock, ReplicatedKv, Hsm), DTOs, and error taxonomy for the MTC CA (spec §9)
@@ -92,7 +92,7 @@ CRATE: cloud-types
     - struct UpdateExpression
     - enum Value
   DEPENDS ON: (none)
-  USED BY: cloud-memory
+  USED BY: cloud-memory, retention
 
 CRATE: dev-replicator
   PURPOSE: Local S3 CRR + DynamoDB Global Tables replication simulator with configurable, runtime-adjustable per-link lag (spec §18.3)
@@ -215,5 +215,19 @@ CRATE: mtc-placeholder
   PUBLIC API:
     - fn marker
   DEPENDS ON: (none)
+  USED BY: (none)
+
+CRATE: retention
+  PURPOSE: RetentionPolicy config (7y default, dev override) and retain_until computation for ObjectLock::put_with_retention (spec §15, §9.1)
+  PUBLIC API:
+    - struct RetentionPolicyConfig
+    - const DEFAULT_RETENTION_DAYS
+    - enum RetentionConfigError
+    - struct RetentionDuration
+    - fn indefinite_retention
+    - enum ObjectClass
+    - enum RetentionError
+    - struct RetentionPolicy
+  DEPENDS ON: clock, cloud-memory, cloud-types
   USED BY: (none)
 

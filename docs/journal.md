@@ -137,3 +137,20 @@ regardless of this change. Also tests/e2e/make-targets.sh stub_targets
 still lists api-gen though openapi-codegen-pipeline already implemented it
 (make-targets smoke FAILs on that one line, pre-existing). Neither touched
 here; both worth their own beads.
+
+## 2026-08-05 — prune-retention-policy: added crates/retention (RetentionPolicy config + retain_until)
+
+**Ticket**: prune-retention-policy
+**PR**: —
+
+Decisions:
+- New crate `crates/retention`: `RetentionPolicyConfig` (serde `Deserialize`, 7-year default via `retention_days`, optional `dev_override_minutes`) validates and builds a `RetentionPolicy`; `RetentionPolicy::retain_until(ObjectClass, write_time: SystemTime) -> Result<SystemTime, RetentionError>` is the helper feeding `ObjectLock::put_with_retention` (spec §9.1, `crates/cloud-types`).
+- `retain_until` takes `write_time` as an explicit `SystemTime` parameter rather than an injected `clock::Clock` — the AC's helper computes retain_until for a *given* write time, and the crate itself never reads wall-clock time, so adding a `Clock` dependency to production code would be unjustified coupling. Callers obtain `write_time` from their own injected `clock::Clock` (rule no-systemtime-now-in-prod is satisfied by construction, not by an added dependency).
+- The indefinite sentinel for `ObjectClass::PruningCheckpoint` (spec §15.3: pruning checkpoints retained indefinitely) is a fixed calendar instant, `9999-12-31T23:59:59Z` (`253_402_300_799`s since `UNIX_EPOCH`) — not `write_time + Duration::MAX`. Verified via `SystemTime::checked_add` that adding `Duration::MAX` to a realistic write time overflows the platform's `SystemTime` representation rather than saturating, so a fixed, write-time-independent sentinel is required. Being independent of `write_time` also makes it trivially monotonic. An `ObjectLock` integration test against `cloud-memory` (`tests/objectlock_integration.rs`) proves a checkpoint written with this sentinel survives a 100-year fake-clock advance without becoming deletable.
+- `RetentionDuration` (`crates/retention/src/duration.rs`) is a validated newtype (rule use-newtypes): `from_days`/`from_minutes` are the only constructors and both reject zero/negative inputs, so every `RetentionPolicy` in existence already holds a validated duration.
+- `RetentionPolicyConfig::build` validates `retention_days` even when `dev_override_minutes` is set and becomes the effective duration, so a malformed production value can't hide behind an active dev override.
+- Added a proptest property (`tests/retain_until_property.rs`, filter `retention_policy`) asserting `retain_until` is monotonic non-decreasing in write time for every object class, strictly monotonic for `Entry`/`Tile`, and constant for `PruningCheckpoint`.
+- Verified: `cargo test -p retention` (25 unit + 2 integration + 3 property = 30 tests, 2 doctests) green; `cargo fmt --all --check` and `cargo clippy --workspace --all-targets --all-features -- -D warnings` (both with and without `--all-features`) clean; full `cargo test --workspace --lib` green; `make codemap-check` passes after regenerating `CODEMAP.md`.
+
+Open questions:
+- (none)

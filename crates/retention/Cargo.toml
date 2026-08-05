@@ -1,0 +1,43 @@
+# retention: RetentionPolicy configuration and `retain_until` computation for
+# ObjectLock (ticket prune-retention-policy, spec §15.1 "Model", §15.3
+# "Retention enforcement", §9.1 the ObjectLock interface).
+#
+# Config + duration math only — no crypto surface, no cloud SDK calls, no
+# vendor types (rule no-sdk-types-in-domain). Time is never read directly
+# (rule no-systemtime-now-in-prod, §22.11): every public function that needs
+# "now" takes it as an explicit `SystemTime` parameter supplied by the
+# caller's injected `Clock`.
+[package]
+name = "retention"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+description = "RetentionPolicy config (7y default, dev override) and retain_until computation for ObjectLock::put_with_retention (spec §15, §9.1)"
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+pretty_assertions = { workspace = true }
+# JSON is used only as a concrete, ubiquitous stand-in service-config format
+# for the "parsed from service config" AC's deserialization tests; the crate
+# itself is format-agnostic (any serde data format embeds
+# `RetentionPolicyConfig`). Not in [workspace.dependencies] yet; pinned here
+# per the parallel-ticket convention (dev-replicator precedent).
+serde_json = "1"
+# Integration test proving `RetentionPolicy::retain_until`'s output type is
+# exactly what `ObjectLock::put_with_retention` (spec §9.1) call sites need —
+# not just documentation, an executable check against the in-memory backend.
+cloud-types = { path = "../cloud-types" }
+cloud-memory = { path = "../cloud-memory" }
+clock = { path = "../clock" }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true
