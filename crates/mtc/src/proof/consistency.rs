@@ -133,17 +133,24 @@ impl ConsistencyProof {
             });
         }
 
-        // Boundary: the empty tree is a prefix of everything. The path is empty
-        // (checked above); we still confirm the claimed old root is *the* empty
-        // root, so a bogus old_root cannot ride an empty proof.
+        // Boundary: the empty tree is a prefix of everything, and its only valid
+        // root is the empty-tree root. Confirm the claimed old root is *the*
+        // empty root, so a bogus old_root cannot ride an empty proof. When the
+        // NEW tree is also empty (n == 0 — the degenerate (0, 0) pair), its root
+        // must ALSO be the empty root; otherwise "same size => same root" goes
+        // unenforced at size 0 and a garbage new_root is accepted for an
+        // impossible tree state (crypto F1). This check must run before the
+        // m == n arm so (0, 0) does not fall through to a bare old==new compare.
         if m == 0 {
-            return if *old_root == empty_root::<H>() {
-                Ok(())
-            } else {
-                Err(ProofError::RootMismatch)
-            };
+            if *old_root != empty_root::<H>() {
+                return Err(ProofError::RootMismatch);
+            }
+            if n == 0 && *new_root != empty_root::<H>() {
+                return Err(ProofError::RootMismatch);
+            }
+            return Ok(());
         }
-        // Boundary: identical trees.
+        // Boundary: identical (non-empty) trees.
         if m == n {
             return if old_root == new_root {
                 Ok(())
@@ -398,6 +405,31 @@ mod tests {
         assert_eq!(
             proof
                 .verify::<Sha256Hasher>(&HashOutput([0x00; 32]), &root_at(&tree, 7))
+                .unwrap_err(),
+            ProofError::RootMismatch,
+        );
+    }
+
+    #[test]
+    fn degenerate_zero_zero_requires_empty_new_root() {
+        // crypto F1: the (0, 0) pair must not slip through the m == 0 arm and
+        // accept an arbitrary new_root. At size 0 the only valid root is the
+        // empty-tree root, so "same size => same root" must hold at n == 0 too.
+        let empty = crate::empty_root::<Sha256Hasher>();
+        let proof = ConsistencyProof::from_parts(TreeSize(0), TreeSize(0), Vec::new());
+        // Empty old root but a garbage new root: rejected (the regression).
+        assert_eq!(
+            proof
+                .verify::<Sha256Hasher>(&empty, &HashOutput([0xde; 32]))
+                .unwrap_err(),
+            ProofError::RootMismatch,
+        );
+        // Both roots empty: consistent.
+        proof.verify::<Sha256Hasher>(&empty, &empty).unwrap();
+        // A non-empty old root at (0, 0) is likewise rejected.
+        assert_eq!(
+            proof
+                .verify::<Sha256Hasher>(&HashOutput([0x11; 32]), &empty)
                 .unwrap_err(),
             ProofError::RootMismatch,
         );

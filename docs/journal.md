@@ -156,6 +156,11 @@ Decisions:
   RFC fn/sn reconstruction; consistency the node/last two-root reconstruction.
   old==0 handled (empty tree is a prefix of everything; old_root must equal
   empty_root); old==new handled (roots must match).
+- Post-review fix (crypto F1): the m==0 arm is checked before m==n, so the
+  degenerate (0,0) pair must ALSO require new_root==empty_root — otherwise
+  "same size => same root" is unenforced at size 0 and a garbage new_root rides
+  an empty proof. Added the n==0 new_root==empty_root check in the m==0 arm plus
+  a regression test (verify(proof(0,0,[]), empty_root, garbage) => RootMismatch).
 - Proof wire format (clean-room TLS presentation, RFC 9162 §2.1.3/§2.1.4 shape):
   { uint64 size(s); NodeHash path<0..2^16-1> } with NodeHash = opaque[32].
   Round-trips through the mtc wire framework (TlsSerialize/TlsParse over the

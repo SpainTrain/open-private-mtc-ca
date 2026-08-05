@@ -445,13 +445,18 @@ mod tests {
             proof.leaf_index(),
             proof.audit_path().to_vec(),
         );
-        // For (index=3, size=9) the expected length differs, so it is rejected.
-        assert!(matches!(
+        // Deterministic: inclusion_path_len(3, 8) == 3 but inclusion_path_len(3,
+        // 9) == 4, so the 3-element path is rejected on the length check with the
+        // exact expected/actual before any hashing.
+        assert_eq!(
             mislabeled
                 .verify::<Sha256Hasher>(&leaf_hash_of(3), &tree.root())
                 .unwrap_err(),
-            ProofError::MalformedPath { .. } | ProofError::RootMismatch,
-        ));
+            ProofError::MalformedPath {
+                expected: 4,
+                actual: 3,
+            },
+        );
     }
 
     #[test]
