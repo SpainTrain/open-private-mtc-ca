@@ -102,4 +102,30 @@ pub enum WireError {
         /// Offset of the element that failed to advance the cursor.
         offset: usize,
     },
+
+    /// A value was structurally well-formed (its length prefixes fit the input)
+    /// but violated a spec-defined *content* constraint the generic reader does
+    /// not police: a length below a `<min..max>` floor (the hand-enforced
+    /// minimum-length fields of crypto finding F3 / bead `mtc-qka.3`), an
+    /// unrecognized enum discriminant, or a payload-specific rule.
+    ///
+    /// The generic length-prefixed reader enforces only the *upper* bound
+    /// (rejecting an over-long body as [`Self::LengthOverflow`]); a
+    /// TLS-presentation `T v<min..max>` with `min > 0` (e.g. `DNSName<1..255>`,
+    /// `dns_names<1..2^16-1>`) still needs its floor checked by the type's own
+    /// codec, and this is the error it returns. `reason` is a stable, static
+    /// description so a test, fuzz fixture, or differential harness can pin the
+    /// exact rule that fired.
+    ///
+    /// `offset` is the cursor position within the parse scope where the
+    /// violation was detected (the enclosing sub-reader for a nested field);
+    /// unlike the structural variants it is not guaranteed absolute inside a
+    /// length-delimited sub-structure.
+    #[error("value at offset {offset} violates a spec constraint: {reason}")]
+    InvalidValue {
+        /// Cursor position (within the current parse scope) at detection.
+        offset: usize,
+        /// Stable, static description of the constraint that was violated.
+        reason: &'static str,
+    },
 }
