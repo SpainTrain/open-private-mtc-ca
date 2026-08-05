@@ -456,6 +456,48 @@ mod tests {
     }
 
     #[test]
+    fn partial_tile_boundary_255_256_257() {
+        // QA F1: pin the 255/256/257 partial-tile boundary deterministically
+        // (the proptest also hits it, but only under RNG). Each row is
+        // (tree size, expected level-0 tile widths, expected level-1 tile widths).
+        //   n=255: one partial level-0 tile (255), no level-1 tile.
+        //   n=256: one full level-0 tile (256), one level-1 root tile (width 1).
+        //   n=257: full + width-1 level-0 tiles, one level-1 tile (width 1).
+        let cases: [(u64, &[u16], &[u16]); 3] = [
+            (255, &[255], &[]),
+            (256, &[256], &[1]),
+            (257, &[256, 1], &[1]),
+        ];
+        for (n, l0_widths, l1_widths) in cases {
+            let tree = tree_of(n);
+            let tiles = build_tiles::<Sha256Hasher>(&leaf_hashes(n));
+
+            let mut l0: Vec<_> = tiles
+                .iter()
+                .filter(|t| t.coord().level() == TileLevel(0))
+                .collect();
+            l0.sort_by_key(|t| t.coord().index().0);
+            let got_l0: Vec<u16> = l0.iter().map(|t| t.coord().width().get()).collect();
+            assert_eq!(got_l0.as_slice(), l0_widths, "level-0 widths for n={n}");
+
+            let mut l1: Vec<_> = tiles
+                .iter()
+                .filter(|t| t.coord().level() == TileLevel(1))
+                .collect();
+            l1.sort_by_key(|t| t.coord().index().0);
+            let got_l1: Vec<u16> = l1.iter().map(|t| t.coord().width().get()).collect();
+            assert_eq!(got_l1.as_slice(), l1_widths, "level-1 widths for n={n}");
+
+            // The root still reconstructs from the tiles alone at each boundary.
+            assert_eq!(
+                reconstruct_root::<Sha256Hasher>(&tiles),
+                Some(tree.root()),
+                "reconstructed root for n={n}",
+            );
+        }
+    }
+
+    #[test]
     fn to_bytes_agrees_with_tls_serialize() {
         let leaves = leaf_hashes(300);
         for tile in build_tiles::<Sha256Hasher>(&leaves) {

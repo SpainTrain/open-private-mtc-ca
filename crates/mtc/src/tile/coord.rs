@@ -222,11 +222,23 @@ impl TileCoord {
     /// larger than any this library builds).
     #[must_use]
     pub fn leaf_range(self) -> Option<(u64, u64)> {
-        let shift = u32::from(TILE_HEIGHT) * (u32::from(self.level.0) + 1);
-        let span = u128::from(self.index.0) << shift;
-        let start = u64::try_from(span).ok()?;
-        let width_leaves = u128::from(self.width.get()) * leaf_span(self.level.0);
-        let end = u64::try_from(u128::from(start) + width_leaves).ok()?;
+        // `TileCoord::new` is public and unvalidated, so `level` may be
+        // attacker-controlled (a future tlog-tiles URL parser). Reject levels
+        // beyond any u64-sized tree's tiling first: this keeps every `leaf_span`
+        // shift below `u128`'s width, so the computation cannot shift-overflow
+        // (debug panic) or silently mask the shift (release) (crypto review F1).
+        if self.level.0 > MAX_LEVEL {
+            return None;
+        }
+        let span_below = leaf_span(self.level.0); // 256^level (level <= 8: safe)
+        let tile_span = span_below.checked_mul(u128::from(FULL_TILE_HASHES))?; // 256^(level+1)
+                                                                               // start = index * 256^(level+1). `checked_mul` rejects the value
+                                                                               // overflow a huge index would otherwise wrap — `u128::checked_shl` would
+                                                                               // *not*, as it only guards the shift count, not the significant bits.
+        let start_u128 = u128::from(self.index.0).checked_mul(tile_span)?;
+        let start = u64::try_from(start_u128).ok()?;
+        let width_leaves = u128::from(self.width.get()).checked_mul(span_below)?;
+        let end = u64::try_from(start_u128.checked_add(width_leaves)?).ok()?;
         Some((start, end))
     }
 
@@ -348,7 +360,7 @@ fn tile_for_subtree(block: Subtree, tree_size: TreeSize) -> Result<TileCoord, Ti
 mod tests {
     use super::{
         encode_index, hashes_at_level, tile_width, tiles_for_inclusion, TileCoord, TileIndex,
-        TileLevel, TileWidth, FULL_TILE_HASHES,
+        TileLevel, TileWidth, FULL_TILE_HASHES, MAX_LEVEL,
     };
     use crate::tree::decompose_range;
     use crate::types::{Index, TreeSize};
@@ -405,6 +417,22 @@ mod tests {
         assert_eq!(partial.path(), "tile/0/001.p/5");
         let deep = TileCoord::new(TileLevel(1), TileIndex(1_234_067), TileWidth::FULL);
         assert_eq!(deep.path(), "tile/1/x001/x234/067");
+    }
+
+    #[test]
+    fn leaf_range_never_panics_for_any_level() {
+        // Crypto review F1: `TileCoord::new` is public and unvalidated, so a
+        // future tlog-tiles URL parser could feed an attacker-controlled level.
+        // `leaf_range` must never panic (no shift overflow at any level) and
+        // must return `None` for a level beyond the u64 tiling ceiling. The
+        // maximal index (`u64::MAX`) also exercises the value-overflow guard.
+        for l in 0..=u8::MAX {
+            let coord = TileCoord::new(TileLevel(l), TileIndex(u64::MAX), TileWidth::FULL);
+            let range = coord.leaf_range(); // must return, never panic
+            if l > MAX_LEVEL {
+                assert_eq!(range, None, "level {l} (> {MAX_LEVEL}) must yield None");
+            }
+        }
     }
 
     #[test]
