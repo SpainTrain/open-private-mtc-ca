@@ -228,3 +228,58 @@ Decisions:
 
 Open questions:
 - The storage-facade epic (§8) MUST bridge the two path conventions: it owns the S3 key scheme (tiles/<L>/...zero-padded.../....tile with fixed-width lexicographic ordering, §8.1) and needs a mapping from the serving TileCoord::path() form to its storage key. Neither this bead nor mtc provides that bridge; it belongs with the storage facade. Flagging so it is not silently assumed.
+
+## 2026-08-05 — prune-checkpoint-format: PruningCheckpoint is flat content, no typestate, no Signature field
+
+**Ticket**: mtc-jy9s
+**PR**: —
+
+Decisions:
+- PruningCheckpoint (crates/mtc/src/pruning_checkpoint.rs) models spec §15.2's
+  four fields only (pruned leaf-index range, tree_size, pruned_at timestamp,
+  signing_key_id) as a single flat struct, deliberately NOT mirroring
+  Checkpoint's Signed/Unsigned typestate. The AC lists no Signature field, and
+  signing is an explicit separate bead (prune-checkpoint-signer); adding a
+  typestate now would be speculative complexity with no second state to hold
+  (a Signed variant would need a Signature field this ticket must not add). A
+  future signer bead is expected to wrap this type (e.g. a generic Signed<T>)
+  rather than this type growing an internal typestate.
+- signing_key_id is a phantom-typed Id<SigningKeyTag> (spec §22.5), mirroring
+  LogId/BatchId: String-backed, non-empty by construction, and hand-enforced
+  non-empty again at wire parse (crypto F3) since the generic opaque<u16>
+  reader admits a zero-length field. Modeled but never consumed — no signing,
+  no key resolution.
+- Range invariants (pruned_start <= pruned_end <= tree_size) are enforced in
+  one shared validate_range() helper used by both the in-memory checked
+  constructor (try_new, domain PruningCheckpointError) and TlsParse::tls_parse
+  (mapped to WireError::InvalidValue per the log-entries precedent, not a new
+  bespoke parse-error enum like Checkpoint's) — single source of truth, two
+  error shapes for the two call sites.
+- Reused the checkpoint.rs/proof.rs local write_u64/read_u64 pattern again
+  (the wire framework still has no native uint64 primitive) rather than
+  editing the shared reader/writer, per the existing multi-bead precedent —
+  this is now the third independent local uint64 duplication in crates/mtc;
+  a shared primitive is worth extracting as discovered work.
+- Fuzz target (crates/mtc/fuzz, cargo-fuzz layout mirroring
+  crates/acme-core/fuzz) plus a checked-in seed corpus
+  (fuzz/corpus/parse_pruning_checkpoint/, 13 files) replayed under plain
+  `cargo test -p mtc` via crates/mtc/tests/fuzz_corpus.rs, mirroring
+  crates/acme-core/tests/fuzz_corpus.rs, so the never-panics property is
+  checked on every PR without requiring nightly/cargo-fuzz.
+
+Verification: cargo test -p mtc (13 new pruning_checkpoint tests + 1 new
+fuzz_corpus.rs integration test; 196 total unit tests, all green); cargo fmt
+--all --check clean; cargo clippy --workspace --all-targets --all-features -D
+warnings clean; cargo clippy --all-targets --all-features -D warnings clean
+inside crates/mtc/fuzz's own workspace. The fuzz binary itself (built on
+stable, no cargo-fuzz/nightly available in this sandbox) was smoke-tested:
+every corpus seed replayed individually with no panic, plus a real libFuzzer
+mutation run (-max_total_time=30, ~24M executions) found zero crashes.
+
+Open questions:
+- No nightly toolchain / cargo-fuzz binary is installed in this environment,
+  so `cargo fuzz run parse_pruning_checkpoint -- -max_total_time=60` (the
+  ticket's literal demo command) could not be executed as specified. The
+  equivalent underlying libFuzzer binary was run directly instead (see
+  Verification). CI or a dev machine with cargo-fuzz should still run the
+  literal command periodically per spec §19.3.
