@@ -130,6 +130,7 @@ CRATE: mtc
     - mod log_entry
     - mod proof
     - mod signing
+    - mod tile
     - mod tree
     - mod types
     - mod wire
@@ -175,6 +176,19 @@ CRATE: mtc
     - struct UnsupportedAlgorithm
     - enum VerifyError
     - struct VerifyingKey
+    - fn build_tiles
+    - hashes_at_level
+    - fn reconstruct_root
+    - tile_width
+    - tiles_for_inclusion
+    - struct Tile
+    - TileCoord
+    - enum TileError
+    - TileIndex
+    - TileLevel
+    - TileWidth
+    - FULL_TILE_HASHES
+    - TILE_HEIGHT
     - decompose_range
     - empty_root
     - hash_leaf

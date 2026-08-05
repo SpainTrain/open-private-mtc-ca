@@ -217,3 +217,14 @@ Open questions:
   parallel crates/mtc beads merge — bead candidate.
 - Kani harnesses for the proof primitives are a separate ticket
   (mtclib-kani-harnesses); property tests are the AC here (spec §19.2).
+## 2026-08-05 — mtclib-tiles: TileCoord::path() emits the tlog-tiles serving path, not the spec §8.1 S3 storage key
+
+**Ticket**: mtc-u7m
+**PR**: —
+
+Decisions:
+- TileCoord::path() renders the canonical c2sp.org/tlog-tiles serving convention: tile/<L>/<N>[.p/<W>], with N as x-prefixed zero-padded 3-digit groups (e.g. tile/1/x001/x234/067, tile/0/003.p/232). This is a deliberate divergence from the ticket AC's literal example / spec §8.1's S3 storage layout (tiles/<L>/....tile). The ticket's own Out-of-Scope excludes S3 storage/fetch (storage-facade epic, §8), and 'per tlog-tiles convention' is the AC's primary instruction, so the read-path/serving address is the correct thing to model here. Crypto-tiles and qa-tiles both reviewed and accepted this.
+- The tile bytes themselves are the bare W*32-hash concatenation (no length prefix, no embedded coordinate) exactly as tlog-tiles specifies; the coordinate (level, index, width) travels in the path.
+
+Open questions:
+- The storage-facade epic (§8) MUST bridge the two path conventions: it owns the S3 key scheme (tiles/<L>/...zero-padded.../....tile with fixed-width lexicographic ordering, §8.1) and needs a mapping from the serving TileCoord::path() form to its storage key. Neither this bead nor mtc provides that bridge; it belongs with the storage facade. Flagging so it is not silently assumed.

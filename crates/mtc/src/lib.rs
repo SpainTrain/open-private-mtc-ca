@@ -37,6 +37,7 @@ pub mod error;
 pub mod log_entry;
 pub mod proof;
 pub mod signing;
+pub mod tile;
 pub mod tree;
 pub mod types;
 pub mod wire;
@@ -56,6 +57,10 @@ pub use proof::{ConsistencyProof, InclusionProof, ProofError};
 pub use signing::{
     scheme_for, EcdsaP256, KeyRejected, SignError, Signature, SignatureAlgorithm, SignatureScheme,
     SigningKey, UnknownAlgorithm, UnsupportedAlgorithm, VerifyError, VerifyingKey,
+};
+pub use tile::{
+    build_tiles, hashes_at_level, reconstruct_root, tile_width, tiles_for_inclusion, Tile,
+    TileCoord, TileError, TileIndex, TileLevel, TileWidth, FULL_TILE_HASHES, TILE_HEIGHT,
 };
 pub use tree::{
     decompose_range, empty_root, hash_leaf, hash_node, Hasher, MerkleTree, Sha256Hasher, Subtree,
