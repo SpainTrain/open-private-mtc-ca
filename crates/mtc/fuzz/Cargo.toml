@@ -1,0 +1,36 @@
+# cargo-fuzz package for mtc (spec §19.3, layer 2: unstructured fuzzing;
+# ticket prune-checkpoint-format). Its own workspace root on purpose: fuzz
+# targets need nightly + libfuzzer and must not join the main workspace build
+# (mirrors the crates/acme-core/fuzz precedent).
+#
+# Run (requires nightly + cargo-fuzz):
+#   cd crates/mtc/fuzz
+#   cargo +nightly fuzz run parse_pruning_checkpoint -- -max_total_time=60
+#
+# Corpus lives in corpus/parse_pruning_checkpoint/ (checked in per §19.3);
+# minimized bug-finding inputs graduate to unit-test fixtures in
+# crates/mtc/src/pruning_checkpoint.rs. The same corpus is replayed under
+# plain `cargo test -p mtc` via crates/mtc/tests/fuzz_corpus.rs, so the
+# "never panics" property is checked on every PR even without cargo-fuzz.
+[package]
+name = "mtc-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+mtc = { path = ".." }
+
+[[bin]]
+name = "parse_pruning_checkpoint"
+path = "fuzz_targets/parse_pruning_checkpoint.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]

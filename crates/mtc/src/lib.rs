@@ -36,6 +36,7 @@ pub mod checkpoint;
 pub mod error;
 pub mod log_entry;
 pub mod proof;
+pub mod pruning_checkpoint;
 pub mod signing;
 pub mod tile;
 pub mod tree;
@@ -54,6 +55,9 @@ pub use log_entry::{
     TlsSubjectInfo,
 };
 pub use proof::{ConsistencyProof, InclusionProof, ProofError};
+pub use pruning_checkpoint::{
+    PrunedAt, PruningCheckpoint, PruningCheckpointError, SigningKeyId, SigningKeyTag,
+};
 pub use signing::{
     scheme_for, EcdsaP256, KeyRejected, SignError, Signature, SignatureAlgorithm, SignatureScheme,
     SigningKey, UnknownAlgorithm, UnsupportedAlgorithm, VerifyError, VerifyingKey,

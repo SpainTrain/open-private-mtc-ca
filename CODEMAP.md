@@ -129,6 +129,7 @@ CRATE: mtc
     - mod error
     - mod log_entry
     - mod proof
+    - mod pruning_checkpoint
     - mod signing
     - mod tile
     - mod tree
@@ -164,6 +165,11 @@ CRATE: mtc
     - ConsistencyProof
     - InclusionProof
     - enum ProofError
+    - struct PrunedAt
+    - struct PruningCheckpoint
+    - enum PruningCheckpointError
+    - type SigningKeyId
+    - struct SigningKeyTag
     - fn scheme_for
     - EcdsaP256
     - enum KeyRejected
