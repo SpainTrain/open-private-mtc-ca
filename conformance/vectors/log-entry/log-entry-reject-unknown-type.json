@@ -1,0 +1,10 @@
+{
+  "kind": "log_entry",
+  "id": "log-entry-reject-unknown-type",
+  "description": "Must-reject. A MerkleTreeCertEntryType discriminant of 2, which is neither null_entry(0) nor tbs_cert_entry(1) — LogEntry::tls_parse's catch-all match arm rejects it as InvalidValue. The two bytes are the real u16 TLS-presentation encoding of 2.",
+  "wire_hex": "0002",
+  "parse": {
+    "outcome": "reject",
+    "error_class": "InvalidValue"
+  }
+}

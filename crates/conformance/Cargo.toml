@@ -1,0 +1,42 @@
+# mtc-conformance: spec conformance suite runner and test-vector infrastructure
+# (testing-infra epic, ticket test-conformance-runner; spec §19.4, roadmap
+# Phase 1 "Spec conformance suite scaffolding").
+#
+# A test-vector format (`conformance/vectors/`, documented in that directory's
+# README) plus the runner that discovers every vector and asserts
+# parse/serialize/verify expectations against the real `mtc` crate types
+# (Checkpoint, InclusionProof, LogEntry). Runs under plain `cargo test`, so it
+# rides the existing `cargo test --workspace --all-features` required CI check
+# (spec §22.13) with no separate CI wiring needed — see conformance/README.md.
+[package]
+name = "mtc-conformance"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Spec conformance test-vector loader and runner for the mtc crate (spec §19.4)"
+publish = false
+
+[dependencies]
+mtc = { path = "../mtc" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+# Not in [workspace.dependencies]; pinned here per the "extra deps pinned
+# in-crate" convention (listed in the ticket report for the merge reconcile).
+# Vector fixtures are JSON+hex (AC); serde_json is the natural codec and is
+# already used the same way by mtc-admin-api-tests, acme-core, metrics, and
+# dev-replicator elsewhere in this workspace.
+serde_json = "1"
+
+[dev-dependencies]
+# `examples/generate_vectors.rs` is a bin-shaped program (rule
+# thiserror-for-libs-eyre-for-bins): its fallible calls propagate via `?`
+# into an `eyre::Result` main rather than `.expect()`, which
+# `clippy::expect_used` denies outside `#[test]`/`#[cfg(test)]` (clippy.toml's
+# test-only exemption does not cover `examples/`). Workspace-pinned.
+eyre = { workspace = true }
+
+[lints]
+workspace = true

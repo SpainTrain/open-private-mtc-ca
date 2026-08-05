@@ -1,0 +1,12 @@
+{
+  "kind": "log_entry",
+  "id": "log-entry-accept-null",
+  "description": "Happy path. The spec-defined null_entry placeholder (LogEntry::null), serialized with tls_serialize_to_vec — the constant two-byte `00 00` form (type = null_entry(0), Empty body).",
+  "wire_hex": "0000",
+  "parse": {
+    "outcome": "accept",
+    "fields": {
+      "variant": "null"
+    }
+  }
+}

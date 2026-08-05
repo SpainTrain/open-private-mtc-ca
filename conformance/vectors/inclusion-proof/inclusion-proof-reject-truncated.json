@@ -1,0 +1,10 @@
+{
+  "kind": "inclusion_proof",
+  "id": "inclusion-proof-reject-truncated",
+  "description": "Must-reject. inclusion-proof-accept-001's real serialized bytes with the final byte dropped: the audit_path vector's own u16 length prefix (still the original claimed body length) now exceeds the bytes actually remaining in the truncated input, so the bounded reader rejects it as LengthOverflow before reading any element (caught at the outer length-prefix check, ahead of the per-element 32-byte reads).",
+  "wire_hex": "000000000000000d00000000000000050080194bb5a2d5bd10e5d1aa6fd5d42980b356caf1da623cd9987c4bfa2f81771ed7d448059354605305bf936aa6a0e4c709321c960e2ba6c921b98b9a165319cbe2256b9e8825e5d370a4ae005d0901ea291977e2927f5cf8e3e72660dd09519edbd482cd9b9a5abf2c2026a17333398623ac30a0feff241fee9dc1922b9551f7",
+  "parse": {
+    "outcome": "reject",
+    "error_class": "LengthOverflow"
+  }
+}

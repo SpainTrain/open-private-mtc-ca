@@ -1,0 +1,25 @@
+{
+  "kind": "inclusion_proof",
+  "id": "inclusion-proof-reject-root-mismatch",
+  "description": "Must-reject (verify, not parse). inclusion-proof-accept-001's real serialized bytes with the last bit of the final audit-path hash flipped: still a structurally well-formed proof (parse accepts), but verify() reconstructs a different root than the true one, so it rejects with RootMismatch.",
+  "wire_hex": "000000000000000d00000000000000050080194bb5a2d5bd10e5d1aa6fd5d42980b356caf1da623cd9987c4bfa2f81771ed7d448059354605305bf936aa6a0e4c709321c960e2ba6c921b98b9a165319cbe2256b9e8825e5d370a4ae005d0901ea291977e2927f5cf8e3e72660dd09519edbd482cd9b9a5abf2c2026a17333398623ac30a0feff241fee9dc1922b9551f723",
+  "parse": {
+    "outcome": "accept",
+    "fields": {
+      "tree_size": 13,
+      "leaf_index": 5,
+      "audit_path_hex": [
+        "194bb5a2d5bd10e5d1aa6fd5d42980b356caf1da623cd9987c4bfa2f81771ed7",
+        "d448059354605305bf936aa6a0e4c709321c960e2ba6c921b98b9a165319cbe2",
+        "256b9e8825e5d370a4ae005d0901ea291977e2927f5cf8e3e72660dd09519edb",
+        "d482cd9b9a5abf2c2026a17333398623ac30a0feff241fee9dc1922b9551f723"
+      ]
+    }
+  },
+  "verify": {
+    "outcome": "reject",
+    "leaf_hash_hex": "514158527515064c7bbd35b44c9f11addcfc38b439554fc9bb0d8b7c661c3e8f",
+    "root_hash_hex": "96a5a87ed7ac60e0c1b3dbd8d68227ee37e2971a9269db7e93a2a02ced3f7160",
+    "error_class": "RootMismatch"
+  }
+}
