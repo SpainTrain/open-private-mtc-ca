@@ -112,12 +112,26 @@ CRATE: mtc
   PURPOSE: Core Merkle Tree Certificate domain newtypes and spec primitive types (clean-room, draft-ietf-plants-merkle-tree-certs)
   PUBLIC API:
     - mod error
+    - mod log_entry
     - mod signing
     - mod tree
     - mod types
     - mod wire
     - enum HashOutputError
     - enum IdError
+    - fn null_entry
+    - Claim
+    - ClaimType
+    - DnsName
+    - EntryError
+    - enum LogEntry
+    - NoSubjectInfoHash
+    - NoSubjectType
+    - SubjectInfoHash
+    - SubjectType
+    - TbsCertificateLogEntry
+    - TbsCertificateLogEntryBuilder
+    - TlsSubjectInfo
     - fn scheme_for
     - EcdsaP256
     - enum KeyRejected
