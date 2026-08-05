@@ -27,9 +27,10 @@
 //! `signature_input` submodule. A checkpoint is the `start == 0` subtree, so
 //! the signed bytes commit to `(log_id, tree_size, root_hash)` under the
 //! `mtc-subtree/v1` label. Notably, `signed_at` is **not** part of the signed
-//! payload (the draft structure carries no timestamp), so it is authenticated
-//! metadata of the checkpoint record but not of the signature — see
-//! [`Checkpoint::signature_input`] and the tests.
+//! payload (the draft structure carries no timestamp), so it is
+//! **unauthenticated** metadata of the checkpoint record — the signature does
+//! not cover it, and nothing else here does either — see
+//! [`Checkpoint::signature_input`] and the `mutated_signed_at_*` test.
 //!
 //! # Signing/verification backend (ADR-0003)
 //!
@@ -254,6 +255,11 @@ impl Checkpoint<Signed> {
     /// Parses a signed checkpoint from TLS-presentation wire bytes, requiring
     /// every byte to be consumed (spec §19.3).
     ///
+    /// **Parsing does not verify the signature** — it cannot, since no key is
+    /// available at parse time. The returned [`Checkpoint<Signed>`] means only
+    /// "these bytes carry a signature field", never "the signature is valid";
+    /// a caller must still call [`verify`](Self::verify) before trusting it.
+    ///
     /// This is the untrusted-input boundary: it never panics, bounds every
     /// length against the remaining input, and hand-enforces the `TrustAnchorID`
     /// minimum length (the generic reader admits a zero-length opaque; the draft
@@ -452,6 +458,35 @@ mod tests {
         }
     }
 
+    /// A signed checkpoint with `log_id` replaced but the signature kept. The
+    /// log id feeds both `cosigner_id` and `log_id` of the signed input, so a
+    /// mutation here must break verification.
+    fn with_log_id(cp: &Checkpoint<Signed>, log_id: LogId) -> Checkpoint<Signed> {
+        Checkpoint {
+            log_id,
+            tree_size: cp.tree_size,
+            root_hash: cp.root_hash,
+            signed_at: cp.signed_at,
+            state: Signed {
+                signature: cp.state.signature.clone(),
+            },
+        }
+    }
+
+    /// A signed checkpoint with the signature replaced but every committed
+    /// field kept. Used to graft a *well-formed but wrong* signature (one the
+    /// same key produced over different data), so verification fails as
+    /// `BadSignature` rather than `MalformedSignature`.
+    fn with_signature(cp: &Checkpoint<Signed>, signature: Signature) -> Checkpoint<Signed> {
+        Checkpoint {
+            log_id: cp.log_id.clone(),
+            tree_size: cp.tree_size,
+            root_hash: cp.root_hash,
+            signed_at: cp.signed_at,
+            state: Signed { signature },
+        }
+    }
+
     #[test]
     fn build_populates_every_field_and_accessors_read_back() {
         let cp = unsigned("prod-log", 42, [0xab; 32], 1_700_000_000);
@@ -536,6 +571,43 @@ mod tests {
         // Mutated root_hash: the signed input's `hash` changes -> rejected.
         assert_eq!(
             with_root_hash(&signed, HashOutput([0x02; 32])).verify(&scheme, &verifying),
+            Err(CheckpointVerifyError::Verify(VerifyError::BadSignature)),
+        );
+    }
+
+    #[test]
+    fn verify_rejects_mutated_log_id_and_corrupted_signature() {
+        // Closes the gap where the checkpoint-level suite only tampered
+        // tree_size/root_hash/key: verify's rustdoc also claims a mutated
+        // log_id and a corrupted signature fail, so exercise both end to end.
+        // These are the cases a future short-circuit (e.g. a cache keyed on
+        // (tree_size, root_hash) that skipped the signature check) would let
+        // slip past — hence a dedicated regression guard.
+        let scheme = EcdsaP256;
+        let (signing, verifying) = EcdsaP256::generate_keypair();
+        let signed = unsigned("ca", 5, [0x01; 32], 0)
+            .sign(&scheme, &signing)
+            .unwrap();
+
+        // Mutated log_id: the signed input's cosigner_id and log_id change ->
+        // rejected.
+        assert_eq!(
+            with_log_id(&signed, LogId::new("cb").unwrap()).verify(&scheme, &verifying),
+            Err(CheckpointVerifyError::Verify(VerifyError::BadSignature)),
+        );
+
+        // Corrupted signature: a well-formed signature the SAME key produced
+        // over a DIFFERENT checkpoint does not verify this one. Grafting a
+        // valid-but-wrong signature keeps it well-formed, so the failure is
+        // BadSignature (the signature was checked against the data), never
+        // MalformedSignature.
+        let wrong_signature = unsigned("ca", 999, [0x01; 32], 0)
+            .sign(&scheme, &signing)
+            .unwrap()
+            .signature()
+            .clone();
+        assert_eq!(
+            with_signature(&signed, wrong_signature).verify(&scheme, &verifying),
             Err(CheckpointVerifyError::Verify(VerifyError::BadSignature)),
         );
     }
