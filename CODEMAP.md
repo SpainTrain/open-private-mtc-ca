@@ -64,6 +64,25 @@ CRATE: cloud-memory
   DEPENDS ON: clock, cloud-test-suite, cloud-types
   USED BY: cloud-test-suite, retention
 
+CRATE: cloud-softhsm
+  PURPOSE: PKCS#11 implementation of the cloud-types Hsm trait against SoftHSM2, the non-FIPS dev stand-in for CloudHSM (spec §9.3, §14)
+  PUBLIC API:
+    - mod config
+    - mod hsm
+    - enum ConfigError
+    - struct Pkcs11Config
+    - const DEFAULT_KEY_LABEL
+    - const DEFAULT_MODULE_PATH
+    - const DEFAULT_PIN
+    - const DEFAULT_TOKEN_LABEL
+    - const ENV_KEY_LABEL
+    - const ENV_MODULE_PATH
+    - const ENV_PIN
+    - const ENV_TOKEN_LABEL
+    - struct SoftHsm
+  DEPENDS ON: cloud-types
+  USED BY: (none)
+
 CRATE: cloud-test-suite
   PURPOSE: Shared factory-closure conformance suites for cloud-types backends: ObjectStore, ObjectLock, ReplicatedKv, Hsm (spec §9.7)
   PUBLIC API:
@@ -106,7 +125,7 @@ CRATE: cloud-types
     - struct UpdateExpression
     - enum Value
   DEPENDS ON: (none)
-  USED BY: cloud-memory, cloud-test-suite, retention
+  USED BY: cloud-memory, cloud-softhsm, cloud-test-suite, retention
 
 CRATE: dev-replicator
   PURPOSE: Local S3 CRR + DynamoDB Global Tables replication simulator with configurable, runtime-adjustable per-link lag (spec §18.3)

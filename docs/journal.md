@@ -401,3 +401,13 @@ Open questions:
   (`cargo test -- --ignored`, or a release CI lane) so the claim is falsifiable
   in-repo; it is out of the default gate only for debug-build speed.
 - CODEMAP.md and Cargo.lock regenerated centrally at merge (coordinator).
+## 2026-08-06 — softhsm-backend: cloud-softhsm implements cloud-types Hsm over PKCS#11/SoftHSM2 via safe cryptoki (no unsafe, no FFI exception); CKM_ECDSA over in-Rust SHA-256 -> 64-byte P1363 r||s (ADR-0003), SPKI export via RustCrypto, non-extractable keys, is_fips_validated=false. Integration tests (--features integration) verified live against real SoftHSM2. See ADR-0005.
+
+**Ticket**: —
+**PR**: —
+
+Decisions:
+- softhsm-backend: cloud-softhsm implements cloud-types Hsm over PKCS#11/SoftHSM2 via safe cryptoki (no unsafe, no FFI exception); CKM_ECDSA over in-Rust SHA-256 -> 64-byte P1363 r||s (ADR-0003), SPKI export via RustCrypto, non-extractable keys, is_fips_validated=false. Integration tests (--features integration) verified live against real SoftHSM2. See ADR-0005.
+
+Open questions:
+- (none)
