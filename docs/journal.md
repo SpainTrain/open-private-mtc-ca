@@ -436,3 +436,25 @@ Decisions:
 
 Open questions:
 - (none)
+
+## 2026-08-06 — mtc-kjl (EntryIntake seam, crates/ca-service): SourceType is an OPEN enum (NativeAcme | Adapter(String)) so future intake adapters are additions not edits (spec 10.4); EntryIntake is async-trait/dyn-compatible (Arc<dyn EntryIntake>) as the Stage-1/Stage-2 seam; its LogEntry is the pre-admission SUBMISSION envelope (spec 10.2), deliberately distinct from mtc::LogEntry (the Merkle tree-leaf) -- disambiguated in rustdoc. qa PASS, merged to main.
+
+**Ticket**: —
+**PR**: —
+
+Decisions:
+- mtc-kjl (EntryIntake seam, crates/ca-service): SourceType is an OPEN enum (NativeAcme | Adapter(String)) so future intake adapters are additions not edits (spec 10.4); EntryIntake is async-trait/dyn-compatible (Arc<dyn EntryIntake>) as the Stage-1/Stage-2 seam; its LogEntry is the pre-admission SUBMISSION envelope (spec 10.2), deliberately distinct from mtc::LogEntry (the Merkle tree-leaf) -- disambiguated in rustdoc. qa PASS, merged to main.
+
+Open questions:
+- (none)
+
+## 2026-08-06 — mtc-gja (admin API core, crates/admin): axum app mounts the generated mtc-admin-api-server stubs and returns a bare prefix-agnostic Router; CA-service state injected as Arc<dyn CaStateProvider> (AppState seam) for in-memory testing; health served at /healthz,/readyz,/status (settled codegen decision, no /api prefix); ca-service binary mount deferred with a standalone 'cargo run -p mtc-admin' dev binary as interim. qa PASS, merged to main.
+
+**Ticket**: —
+**PR**: —
+
+Decisions:
+- mtc-gja (admin API core, crates/admin): axum app mounts the generated mtc-admin-api-server stubs and returns a bare prefix-agnostic Router; CA-service state injected as Arc<dyn CaStateProvider> (AppState seam) for in-memory testing; health served at /healthz,/readyz,/status (settled codegen decision, no /api prefix); ca-service binary mount deferred with a standalone 'cargo run -p mtc-admin' dev binary as interim. qa PASS, merged to main.
+
+Open questions:
+- (none)
