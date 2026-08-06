@@ -1,0 +1,57 @@
+# Admin API core (spec §17.2, §17.4): the axum app that mounts routes
+# generated from api/admin.openapi.yaml (crates/admin-api-server). Ticket
+# mtc-gja wires the health/version surface end-to-end (spec -> generated
+# stub -> handler) plus the AppState/error-model seam later admin-surface
+# tickets build on; UI routes/templates and business operations beyond
+# health/version are out of scope here (see crate-level docs in src/lib.rs).
+[package]
+name = "mtc-admin"
+version = "0.1.0"
+description = "Admin API core: axum app mounting the generated admin-api-server routes (spec §17.2)"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+# Workspace-pinned baseline (root Cargo.toml).
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net"] }
+# Binary-only (src/main.rs): eyre + color-eyre per thiserror-for-libs-eyre-for-bins.
+eyre = { workspace = true }
+color-eyre = { workspace = true }
+
+# The generated OpenAPI server stubs this crate mounts (spec §17.2) --
+# depended on, never regenerated/copied/duplicated (`make api-gen` owns that
+# crate).
+mtc-admin-api-server = { path = "../admin-api-server" }
+
+# Injected time source (spec §22.11, rule no-systemtime-now-in-prod):
+# `AppState`'s `started_at` snapshot is read once through this at startup.
+clock = { path = "../clock" }
+
+# Crate-local pins -- not yet in the workspace baseline; promote to
+# [workspace.dependencies] when a second crate needs them. Pinned to match
+# mtc-admin-api-server's own dependency versions exactly: the generated
+# `Health` / `Status` / `ErrorHandler` trait signatures carry these exact
+# types, so a version drift here would be a compile error, not just a
+# lockfile diff.
+axum = "0.8"
+axum-extra = { version = "0.12", features = ["cookie"] }
+async-trait = "0.1"
+http = "1"
+headers = "0.4"
+chrono = "0.4"
+tracing-subscriber = "0.3"
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+serde_json = "1"
+
+[lints]
+workspace = true
