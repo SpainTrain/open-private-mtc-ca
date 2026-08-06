@@ -52,7 +52,7 @@ CRATE: clock
     - trait Clock
     - struct SystemClock
   DEPENDS ON: (none)
-  USED BY: acme-core, cloud-aws, cloud-memory, cloud-test-suite, dev-replicator, mtc-admin, retention
+  USED BY: acme-core, cloud-aws, cloud-memory, cloud-test-suite, coordination, dev-replicator, mtc-admin, retention
 
 CRATE: cloud-aws
   PURPOSE: AWS-backed cloud-types implementations (S3ObjectStore, S3ObjectLock) over aws-sdk-s3, exercised against LocalStack (spec §9.3)
@@ -72,7 +72,7 @@ CRATE: cloud-memory
     - struct MemoryObjectStore
     - struct MemoryReplicatedKv
   DEPENDS ON: clock, cloud-test-suite, cloud-types
-  USED BY: cloud-test-suite, retention
+  USED BY: cloud-test-suite, coordination, retention
 
 CRATE: cloud-softhsm
   PURPOSE: PKCS#11 implementation of the cloud-types Hsm trait against SoftHSM2, the non-FIPS dev stand-in for CloudHSM (spec §9.3, §14)
@@ -135,7 +135,28 @@ CRATE: cloud-types
     - struct UpdateExpression
     - enum Value
   DEPENDS ON: (none)
-  USED BY: cloud-aws, cloud-memory, cloud-softhsm, cloud-test-suite, retention
+  USED BY: cloud-aws, cloud-memory, cloud-softhsm, cloud-test-suite, coordination, retention
+
+CRATE: coordination
+  PURPOSE: Primary-region lease and epoch-fencing protocol (spec §8.2/§8.3) over the cloud-agnostic ReplicatedKv trait
+  PUBLIC API:
+    - enum LeaseError
+    - trait EpochExt
+    - struct EpochOverflow
+    - struct HolderId
+    - struct Region
+    - const INITIAL_EPOCH
+    - fn epoch_condition
+    - struct Lease
+    - struct LeaseCoordinator
+    - fn run_lease_suite
+    - Epoch
+    - LogId
+    - const RENEWAL_INTERVAL
+    - const LEASE_TTL
+    - const TAKEOVER_SAFETY_MARGIN
+  DEPENDS ON: clock, cloud-memory, cloud-types, mtc
+  USED BY: (none)
 
 CRATE: dev-replicator
   PURPOSE: Local S3 CRR + DynamoDB Global Tables replication simulator with configurable, runtime-adjustable per-link lag (spec §18.3)
@@ -253,7 +274,7 @@ CRATE: mtc
     - WireError
     - struct U24
   DEPENDS ON: (none)
-  USED BY: mtc-ca-service, mtc-conformance, mtc-read, mtc-verify
+  USED BY: coordination, mtc-ca-service, mtc-conformance, mtc-read, mtc-verify
 
 CRATE: mtc-admin
   PURPOSE: Admin API core: axum app mounting the generated admin-api-server routes (spec §17.2)

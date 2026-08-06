@@ -895,6 +895,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "coordination"
+version = "0.1.0"
+dependencies = [
+ "clock",
+ "cloud-memory",
+ "cloud-types",
+ "color-eyre",
+ "eyre",
+ "mtc",
+ "proptest",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

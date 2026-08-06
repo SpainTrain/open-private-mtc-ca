@@ -20,6 +20,17 @@
 //! between the read and the write, the epoch CAS still admits a single winner
 //! and the epoch-fencing on every subsequent write (spec §8.3) keeps the
 //! demoted primary from mutating state.
+//!
+//! # Invariant: the lease item must never be deleted
+//!
+//! Epoch monotonicity — the sole safety fence — holds only because the lease
+//! item persists. [`LeaseCoordinator::acquire`] bootstraps a *missing* item
+//! back at `INITIAL_EPOCH` (guarded by `NotExists`), so if any downstream path
+//! (pruning, promotion, cleanup) ever *deleted* the lease item, a subsequent
+//! `acquire` would reset the epoch below a stale primary's captured epoch and
+//! reopen the fencing gap for counter/checkpoint writes. No code here deletes
+//! the lease; downstream work touching this item MUST preserve that (tracked
+//! for promotion/pruning as its own bead).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
