@@ -156,6 +156,7 @@ CRATE: mtc
   PUBLIC API:
     - mod checkpoint
     - mod error
+    - mod leaf
     - mod log_entry
     - mod proof
     - mod pruning_checkpoint
@@ -178,6 +179,7 @@ CRATE: mtc
     - SUBTREE_SIGNATURE_LABEL
     - enum HashOutputError
     - enum IdError
+    - struct LeafBytes
     - fn null_entry
     - Claim
     - ClaimType

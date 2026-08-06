@@ -15,7 +15,7 @@
 //! leaf hash that verification rejects. Under the new API that mistake does not
 //! even typecheck (`tests/compile_fail/append_raw_bytes.rs`); here we show that
 //! *were* it possible, the read path would reject it — i.e. the frame is
-//! load-bearing, exactly as the audit oracle demonstrated.
+//! essential, exactly as the audit oracle demonstrated.
 
 // Test-only crate: `unwrap`/`expect` are the ergonomic choice here and the
 // no-unwrap-in-prod rule exempts tests (matches tests/serialization.rs).
