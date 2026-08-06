@@ -1,0 +1,68 @@
+# cloud-aws: AWS-backed implementations of the cloud-types traits -- the v1
+# production backend (spec §9.3). This ticket (aws-backend) implements
+# ObjectStore and ObjectLock over aws-sdk-s3, exercised exclusively against
+# LocalStack (spec §1 non-goals: no real AWS spend). DynamoDB ReplicatedKv and
+# CloudHSM land in later tickets (cloud-aws-ddb-kv, cloud-aws-cloudhsm) in
+# this same crate, per the §9.3 crate layout.
+[package]
+name = "cloud-aws"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "AWS-backed cloud-types implementations (S3ObjectStore, S3ObjectLock) over aws-sdk-s3, exercised against LocalStack (spec §9.3)"
+publish = false
+
+[features]
+# Gates the LocalStack-backed integration tests in tests/ (spec §19.1): they
+# need a real LocalStack container (`docker compose -f
+# deploy/local/docker-compose.yml up -d --wait localstack`) and are excluded
+# from a plain `cargo test -p cloud-aws` via each integration test target's
+# `required-features` below. Ticket aws-backend's demo command is
+# `cargo test -p cloud-aws --features integration`.
+integration = []
+
+[dependencies]
+cloud-types = { path = "../cloud-types" }
+# Matches cloud-types' / cloud-memory's existing pin.
+async-trait = "0.1"
+# AWS SDK S3 client. Version and feature set pinned to match
+# crates/dev-replicator's existing pin exactly (rt-tokio + rustls, no default
+# features) so Cargo resolves one shared version instead of two -- avoiding a
+# new duplicate-dependency-version entry. mtc-t92.3 tracks the pre-existing
+# webpki RUSTSEC advisory from this SDK stack as a known issue; matching
+# dev-replicator's pin means this crate does not add a second, differently
+# resolved copy of that stack.
+aws-sdk-s3 = { version = "1", default-features = false, features = ["rt-tokio", "rustls"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+# Runs the shared cloud-test-suite conformance suites (spec §9.7) against
+# this backend from tests/, gated behind the `integration` feature (a live
+# LocalStack container is required) -- mirrors crates/cloud-memory/Cargo.toml,
+# which runs the same suites unconditionally against the pure-memory backend.
+cloud-test-suite = { path = "../cloud-test-suite" }
+# tests/object_lock_suite.rs injects a real clock (SystemClock), not
+# FakeClock -- see the crate-level "Clock choice for the shared ObjectLock
+# suite" docs in src/lib.rs.
+clock = { path = "../clock" }
+
+# LocalStack-backed conformance runs (ticket aws-backend Testing AC:
+# "Integration ... LocalStack-backed tests behind --features integration").
+# `required-features` keeps these out of a plain `cargo test -p cloud-aws`
+# (see the `integration` feature above); autodiscovery still finds the files,
+# these entries only layer `required-features` onto the discovered targets.
+[[test]]
+name = "object_store_suite"
+path = "tests/object_store_suite.rs"
+required-features = ["integration"]
+
+[[test]]
+name = "object_lock_suite"
+path = "tests/object_lock_suite.rs"
+required-features = ["integration"]
+
+[lints]
+workspace = true

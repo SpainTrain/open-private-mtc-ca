@@ -758,6 +758,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "cloud-aws"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "aws-sdk-s3",
+ "clock",
+ "cloud-test-suite",
+ "cloud-types",
+ "tokio",
+]
+
+[[package]]
 name = "cloud-memory"
 version = "0.1.0"
 dependencies = [
