@@ -1,0 +1,69 @@
+# cloud-softhsm: PKCS#11 implementation of the cloud-types `Hsm` trait against
+# SoftHSM2 — the dev-mode stand-in for CloudHSM (spec §9.3, §14, §18.1).
+#
+# Safe by construction: this crate talks PKCS#11 through `cryptoki` (a
+# well-maintained safe wrapper that owns the `unsafe` FFI internally), so it
+# inherits the workspace `unsafe_code = "forbid"` lint like every other crate —
+# it does NOT take the docs/lint-policy.md PKCS#11 FFI exception. See
+# docs/adr/0005-softhsm-pkcs11-hsm-backend.md.
+#
+# Non-workspace deps are pinned in-crate per the parallel-ticket convention and
+# LISTED in the ticket report (reconciled into the workspace baseline at merge).
+[package]
+name = "cloud-softhsm"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "PKCS#11 implementation of the cloud-types Hsm trait against SoftHSM2, the non-FIPS dev stand-in for CloudHSM (spec §9.3, §14)"
+publish = false
+
+[features]
+# Integration tests that require a live, provisioned SoftHSM2 token
+# (`scripts/softhsm-init.sh`). Off by default so `cargo test -p cloud-softhsm`
+# stays a fast, dependency-free unit run (spec §19.1); the shared conformance
+# wiring (cloud-softhsm-conformance) turns this on in the CI integration lane.
+integration = []
+
+[dependencies]
+cloud-types = { path = "../cloud-types" }
+# Safe PKCS#11 wrapper. Owns all `unsafe` FFI internally and dlopen's the
+# module at runtime (libloading), so this crate builds and unit-tests without
+# any C library or SoftHSM2 present — only the feature-gated integration tests
+# need a live module (spec §14, docs/lint-policy.md PKCS#11 note).
+cryptoki = "0.7"
+# async fn in the object-safe `Hsm` trait (matches cloud-types). Pinned to
+# match cloud-types / cloud-memory.
+async-trait = "0.1"
+# `spawn_blocking`: PKCS#11 calls are blocking C FFI and a `Session` is not
+# `Sync`, so each operation runs on tokio's blocking pool with its own session
+# — real parallel signing without blocking async workers. Only the "rt"
+# feature is needed here; the CA binary drives the full runtime.
+tokio = { workspace = true, features = ["rt"] }
+# Assemble the exported EC point into SPKI DER and (in tests) verify — reuses
+# the same RustCrypto types the memory backend and mtclib-signing use, so the
+# SPKI export round-trips with standard verifiers. Version/features match
+# cloud-memory's p256 dependency.
+p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
+# SHA-256 digest of the message before CKM_ECDSA (the mechanism signs a
+# pre-computed hash); keeps the digest step explicit and deterministic and
+# matches the trait's "backend performs SHA-256 digesting" contract. RustCrypto,
+# same family as p256.
+sha2 = "0.10"
+# Typed config errors for the library surface (rule thiserror-for-libs).
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+pretty_assertions = { workspace = true }
+# Verify SoftHSM signatures against a standard verifier in the integration
+# tests (the cryptographic invariant, spec §19.6).
+p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
+
+[lints]
+# Inherit the full workspace lint baseline — including `unsafe_code = "forbid"`.
+# Using the safe `cryptoki` wrapper means this crate needs no unsafe and does
+# NOT declare the PKCS#11 FFI exception (docs/lint-policy.md).
+workspace = true
