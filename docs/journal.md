@@ -425,3 +425,14 @@ Decisions:
 - Two real (not LocalStack-specific) S3 platform characteristics, observed empirically running live against LocalStack 4.14.0 and documented in crate-level rustdoc: HeadObject reports missing-key errors as NotFound rather than NoSuchKey (no body to carry an XML code); Object Lock retain-until dates carry only second precision on the wire. Neither suite case is skipped -- the integration test injects a whole-second-truncating clock instead of clock::SystemClock so the round-trip assertion is meaningful at S3's actual precision.
 - Integration tests (tests/support/mod.rs) provision a fresh, uniquely-named bucket per test run rather than reusing deploy/local's mtc-log-local bucket: that bucket carries a 1-day default Compliance retention rule (would retain every plain put, breaking test_delete_removes_object), and the ObjectLock suite's fixed key names would collide with still-locked objects from a previous run against a long-lived bucket.
 - aws-sdk-s3 pinned to the exact same version spec/features as dev-replicator's existing dependency (version = 1, rt-tokio + rustls, no default features) -- Cargo.lock diff confirms zero new duplicate versions introduced.
+
+## 2026-08-06 — mtc-586 (checkpoint-signer): owns the section 8.1 checkpoints/{tree_size:016}.signed OBJECT format (body = mtc TLS-presentation layout: TrustAnchorID log_id + u64 tree_size + HashValue root_hash + u64 signed_at + opaque signature<0..2^16-1>; addressed by tree_size, NEVER by signature bytes per ADR-0003 B.1/B.2). HSM-signature attach uses Option B (frame object + reuse Checkpoint::signature_input() canonicalization); typed Option A into_signed seam deferred to fast-follow bead. mtc-586 was dispatched on a stale worktree base (6c31848, pre-checkpoint) and re-cut from main 9aaf048.
+
+**Ticket**: —
+**PR**: —
+
+Decisions:
+- mtc-586 (checkpoint-signer): owns the section 8.1 checkpoints/{tree_size:016}.signed OBJECT format (body = mtc TLS-presentation layout: TrustAnchorID log_id + u64 tree_size + HashValue root_hash + u64 signed_at + opaque signature<0..2^16-1>; addressed by tree_size, NEVER by signature bytes per ADR-0003 B.1/B.2). HSM-signature attach uses Option B (frame object + reuse Checkpoint::signature_input() canonicalization); typed Option A into_signed seam deferred to fast-follow bead. mtc-586 was dispatched on a stale worktree base (6c31848, pre-checkpoint) and re-cut from main 9aaf048.
+
+Open questions:
+- (none)
