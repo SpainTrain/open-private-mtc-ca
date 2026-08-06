@@ -469,3 +469,14 @@ Decisions:
 
 Open questions:
 - (none)
+
+## 2026-08-06 — mtc-586 (checkpoint-signer): write-path step-7 HSM signer, self-contained Option B (crates/mtc unmodified) -- signs mtc's signature_input() via Arc<dyn Hsm> (64-byte P1363 r||s, ADR-0003; non-64 -> terminal MalformedSignature), frames the §8.1 checkpoints/{tree_size:016}.signed object byte-identical to mtc TLS-presentation (parse oracle + universal proptest), retry/backoff via injected AsyncClock. Fable crypto PASS + qa PASS. mk/quality.mk bench stub filled with 'cargo bench --workspace' (qa: KEEP; testing epic to reconcile). Bench=MemoryHsm ~0.18ms; real-token p99 in cloud-softhsm test. signed_at unauthenticated by design (draft §5.4.1) -> note on mtc-1hp.5. Typed into_signed seam deferred to mtc-qka.12.
+
+**Ticket**: —
+**PR**: —
+
+Decisions:
+- mtc-586 (checkpoint-signer): write-path step-7 HSM signer, self-contained Option B (crates/mtc unmodified) -- signs mtc's signature_input() via Arc<dyn Hsm> (64-byte P1363 r||s, ADR-0003; non-64 -> terminal MalformedSignature), frames the §8.1 checkpoints/{tree_size:016}.signed object byte-identical to mtc TLS-presentation (parse oracle + universal proptest), retry/backoff via injected AsyncClock. Fable crypto PASS + qa PASS. mk/quality.mk bench stub filled with 'cargo bench --workspace' (qa: KEEP; testing epic to reconcile). Bench=MemoryHsm ~0.18ms; real-token p99 in cloud-softhsm test. signed_at unauthenticated by design (draft §5.4.1) -> note on mtc-1hp.5. Typed into_signed seam deferred to mtc-qka.12.
+
+Open questions:
+- (none)
