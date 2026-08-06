@@ -2,19 +2,41 @@
 //! same for a consistency proof between two checkpoints (ticket
 //! `mtclib-inclusion-proofs`).
 //!
+//! The tree is built the way the CA write path builds it — appending the framed
+//! `LeafBytes` of real `LogEntry` values — and verification reconstructs each
+//! leaf hash via `LogEntry::leaf_hash`, so this demo exercises the write/read
+//! framing invariant end to end.
+//!
 //! ```console
 //! $ cargo run -p mtc --example prove_and_verify
 //! ```
 
-use mtc::{hash_leaf, ConsistencyProof, InclusionProof, Index, MerkleTree, Sha256Hasher, TreeSize};
+use std::error::Error;
+
+use mtc::{
+    ConsistencyProof, HashOutput, InclusionProof, Index, LogEntry, MerkleTree, Sha256Hasher,
+    SubjectInfoHash, SubjectType, TbsCertificateLogEntry, TreeSize,
+};
 use rand_core::{OsRng, RngCore};
 
-fn main() -> Result<(), mtc::ProofError> {
-    // Build a log of a few thousand entries.
+/// A distinct certificate log entry for index `i`.
+fn log_entry_for(i: u64) -> LogEntry {
+    let mut subject_info_hash = [0u8; 32];
+    subject_info_hash[..8].copy_from_slice(&i.to_be_bytes());
+    LogEntry::certificate(
+        TbsCertificateLogEntry::builder()
+            .subject_type(SubjectType::Tls)
+            .subject_info_hash(SubjectInfoHash::from_hash(HashOutput(subject_info_hash)))
+            .build(),
+    )
+}
+
+fn main() -> Result<(), Box<dyn Error>> {
+    // Build a log of a few thousand entries the way the CA does.
     const SIZE: u64 = 5_000;
     let mut tree: MerkleTree = MerkleTree::with_capacity(5_000);
     for i in 0..SIZE {
-        tree.append(format!("entry-{i}").as_bytes());
+        tree.append(&log_entry_for(i).leaf_bytes()?);
     }
     let root = tree.root();
     println!("log size        : {}", tree.len().0);
@@ -23,7 +45,9 @@ fn main() -> Result<(), mtc::ProofError> {
     // --- Inclusion proof for a random leaf ---------------------------------
     let index = OsRng.next_u64() % SIZE;
     let proof = InclusionProof::generate(&tree, Index(index))?;
-    let leaf = hash_leaf::<Sha256Hasher>(format!("entry-{index}").as_bytes());
+    // Reconstruct the leaf hash the read-path way: from the LogEntry, not from
+    // ad-hoc bytes — the same framing the tree committed.
+    let leaf = log_entry_for(index).leaf_hash::<Sha256Hasher>()?;
 
     println!("\ninclusion proof for leaf {index}");
     println!(
@@ -40,7 +64,7 @@ fn main() -> Result<(), mtc::ProofError> {
     }
     let tampered = InclusionProof::from_parts(proof.tree_size(), proof.leaf_index(), tampered_path);
     match tampered.verify::<Sha256Hasher>(&leaf, &root) {
-        Ok(()) => return Err(mtc::ProofError::RootMismatch), // never happens
+        Ok(()) => return Err("tampered proof unexpectedly verified".into()), // never happens
         Err(err) => println!("  tampered      : rejected ({err})"),
     }
 

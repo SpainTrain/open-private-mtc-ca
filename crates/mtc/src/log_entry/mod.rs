@@ -57,6 +57,7 @@ mod subject;
 
 use std::io::{self, Write};
 
+use crate::leaf::LeafBytes;
 use crate::tree::{hash_leaf, Hasher};
 use crate::types::HashOutput;
 use crate::wire::{write_u16, TlsParse, TlsReader, TlsSerialize, WireError};
@@ -111,24 +112,49 @@ impl LogEntry {
         matches!(self, Self::Null)
     }
 
+    /// The exact bytes this entry commits as a Merkle-tree leaf: its
+    /// serialization with the entry-type discriminant first (`00 00` for
+    /// `null_entry`, `00 01…` for a certificate entry).
+    ///
+    /// This is the sanctioned way to obtain a [`LeafBytes`] and the *only*
+    /// public producer of one: hand the result to
+    /// [`MerkleTree::append`](crate::MerkleTree::append) and the bytes the CA
+    /// commits are framed by the **same** serialization a relying party
+    /// reconstructs and verifies against. There is deliberately no way to
+    /// append un-framed bytes (crypto audit 2026-08-05, Finding 2).
+    ///
+    /// [`leaf_hash`](Self::leaf_hash) is defined as `HASH(0x00 || leaf_bytes)`,
+    /// so the write-path preimage and the read-path leaf hash can never drift.
+    ///
+    /// # Errors
+    ///
+    /// Propagates an encoding failure from [`TlsSerialize::tls_serialize_to_vec`]
+    /// (a claim body overflowing its `u16` length prefix). For
+    /// [`LogEntry::Null`] this is infallible.
+    pub fn leaf_bytes(&self) -> io::Result<LeafBytes> {
+        Ok(LeafBytes::from_framed(self.tls_serialize_to_vec()?))
+    }
+
     /// Computes this entry's Merkle-tree leaf hash: `HASH(0x00 || entry)`.
     ///
-    /// The entry is serialized (type discriminant first) and hashed with the
-    /// domain-separated [`hash_leaf`](crate::hash_leaf) from the tree layer
-    /// (spec §19.2 leaf/interior separation). Returning a `Result` rather than
-    /// hashing eagerly upholds the wire-module contract: an entry that fails to
-    /// encode (a claim body overflowing its `u16` prefix) must surface the
-    /// error, never be leaf-hashed from truncated bytes — a CA that hashed the
-    /// wrong bytes would commit to a certificate it did not mean to (wire-module
-    /// Finding-1 note).
+    /// The entry is serialized (type discriminant first, via
+    /// [`leaf_bytes`](Self::leaf_bytes)) and hashed with the domain-separated
+    /// [`hash_leaf`](crate::hash_leaf) from the tree layer (spec §19.2
+    /// leaf/interior separation). It shares one serialization call with
+    /// `leaf_bytes`, so the hash a relying party checks is taken over exactly
+    /// the bytes the CA appends. Returning a `Result` rather than hashing
+    /// eagerly upholds the wire-module contract: an entry that fails to encode
+    /// (a claim body overflowing its `u16` prefix) must surface the error, never
+    /// be leaf-hashed from truncated bytes — a CA that hashed the wrong bytes
+    /// would commit to a certificate it did not mean to (wire-module Finding-1
+    /// note).
     ///
     /// # Errors
     ///
     /// Propagates an encoding failure from [`TlsSerialize::tls_serialize_to_vec`].
     /// For [`LogEntry::Null`] this is infallible.
     pub fn leaf_hash<H: Hasher>(&self) -> io::Result<HashOutput> {
-        let bytes = self.tls_serialize_to_vec()?;
-        Ok(hash_leaf::<H>(&bytes))
+        Ok(hash_leaf::<H>(self.leaf_bytes()?.as_bytes()))
     }
 }
 

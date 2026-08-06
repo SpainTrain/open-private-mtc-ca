@@ -34,6 +34,7 @@
 
 pub mod checkpoint;
 pub mod error;
+pub mod leaf;
 pub mod log_entry;
 pub mod proof;
 pub mod pruning_checkpoint;
@@ -49,6 +50,7 @@ pub use checkpoint::{
     TrustAnchorIdError, Unsigned, SUBTREE_SIGNATURE_LABEL,
 };
 pub use error::{HashOutputError, IdError};
+pub use leaf::LeafBytes;
 pub use log_entry::{
     null_entry, Claim, ClaimType, DnsName, EntryError, LogEntry, NoSubjectInfoHash, NoSubjectType,
     SubjectInfoHash, SubjectType, TbsCertificateLogEntry, TbsCertificateLogEntryBuilder,

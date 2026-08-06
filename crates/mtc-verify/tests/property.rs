@@ -12,7 +12,7 @@
 use mtc::{
     Checkpoint, CheckpointBuilder, Claim, DnsName, EcdsaP256, HashOutput, InclusionProof, Index,
     LogEntry, LogId, MerkleTree, Sha256Hasher, Signed, SignedAt, SigningKey, SubjectInfoHash,
-    SubjectType, TbsCertificateLogEntry, TlsSerialize, TreeSize, VerifyingKey,
+    SubjectType, TbsCertificateLogEntry, TreeSize, VerifyingKey,
 };
 use mtc_verify::verify_inclusion;
 use proptest::prelude::*;
@@ -43,7 +43,7 @@ fn log_of(n: u64) -> (Vec<LogEntry>, Tree) {
     let entries: Vec<LogEntry> = (0..n).map(|i| entry_from(hash_for(i))).collect();
     let mut tree = Tree::new();
     for e in &entries {
-        tree.append(&e.tls_serialize_to_vec().unwrap());
+        tree.append(&e.leaf_bytes().unwrap());
     }
     (entries, tree)
 }
