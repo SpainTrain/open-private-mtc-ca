@@ -2354,6 +2354,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtc-admin"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "axum-extra",
+ "chrono",
+ "clock",
+ "color-eyre",
+ "eyre",
+ "headers",
+ "http 1.4.2",
+ "http-body-util",
+ "mtc-admin-api-server",
+ "pretty_assertions",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "mtc-admin-api-client"
 version = "0.1.0"
 dependencies = [
@@ -2404,6 +2428,19 @@ dependencies = [
  "mtc-admin-api-server",
  "pretty_assertions",
  "serde_json",
+]
+
+[[package]]
+name = "mtc-ca-service"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "mtc",
+ "proptest",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]

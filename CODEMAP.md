@@ -52,7 +52,7 @@ CRATE: clock
     - trait Clock
     - struct SystemClock
   DEPENDS ON: (none)
-  USED BY: acme-core, cloud-aws, cloud-memory, cloud-test-suite, dev-replicator, retention
+  USED BY: acme-core, cloud-aws, cloud-memory, cloud-test-suite, dev-replicator, mtc-admin, retention
 
 CRATE: cloud-aws
   PURPOSE: AWS-backed cloud-types implementations (S3ObjectStore, S3ObjectLock) over aws-sdk-s3, exercised against LocalStack (spec §9.3)
@@ -253,7 +253,23 @@ CRATE: mtc
     - WireError
     - struct U24
   DEPENDS ON: (none)
-  USED BY: mtc-conformance, mtc-read, mtc-verify
+  USED BY: mtc-ca-service, mtc-conformance, mtc-read, mtc-verify
+
+CRATE: mtc-admin
+  PURPOSE: Admin API core: axum app mounting the generated admin-api-server routes (spec §17.2)
+  PUBLIC API:
+    - mod error
+    - mod handlers
+    - mod state
+    - enum AdminApiError
+    - struct AppState
+    - trait CaStateProvider
+    - struct DependencyCheck
+    - struct InMemoryCaState
+    - struct ServiceIdentity
+    - fn router
+  DEPENDS ON: clock, mtc-admin-api-server
+  USED BY: (none)
 
 CRATE: mtc-admin-api-client
   PURPOSE: Administrative HTTP+JSON API for the Merkle Tree Certificate CA (spec §17.2). Consumed by `mtcctl` (via the generated Rust client) and the admin UI. Seed surface: health endpoints (§20.5) and a minimal service status endpoint (§17.3).
@@ -273,13 +289,24 @@ CRATE: mtc-admin-api-server
     - mod models
     - mod types
   DEPENDS ON: (none)
-  USED BY: mtc-admin-api-tests
+  USED BY: mtc-admin, mtc-admin-api-tests
 
 CRATE: mtc-admin-api-tests
   PURPOSE: (no description in Cargo.toml)
   PUBLIC API:
     (none)
   DEPENDS ON: mtc-admin-api-client, mtc-admin-api-server
+  USED BY: (none)
+
+CRATE: mtc-ca-service
+  PURPOSE: Source-agnostic entry-intake seam (LogEntry, SourceType, EntryIntake) between issuance adapters and the CA write path (spec §10.2-10.4)
+  PUBLIC API:
+    - struct LogEntry
+    - struct SourceId
+    - enum SourceType
+    - trait EntryIntake
+    - enum IntakeError
+  DEPENDS ON: mtc
   USED BY: (none)
 
 CRATE: mtc-conformance

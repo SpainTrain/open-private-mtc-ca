@@ -27,3 +27,6 @@ volume/
 # Task-scoped working set (spec §23.4) — working copies are never committed.
 # The checked-in template lives at docs/templates/WORKING_SET.md.
 /WORKING_SET.md
+
+# Agent worktrees (transient; created by the Agent tool or `git worktree add`).
+.claude/worktrees/
