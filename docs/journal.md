@@ -401,3 +401,17 @@ Open questions:
   (`cargo test -- --ignored`, or a release CI lane) so the claim is falsifiable
   in-repo; it is out of the default gate only for debug-build speed.
 - CODEMAP.md and Cargo.lock regenerated centrally at merge (coordinator).
+
+## 2026-08-06 — aws-backend: cloud-aws crate — S3ObjectStore/S3ObjectLock reconciling versioned S3 with the single-object-per-key cloud-types contract
+
+**Ticket**: mtc-xyn
+**PR**: —
+
+Decisions:
+- ObjectStore::delete issues a versioned DeleteObject (HeadObject first for the current version_id), not a plain unversioned DELETE. A plain DELETE on a locked key would succeed via a delete marker while the locked bytes stay physically present -- the opposite of the spec 9.5 bar. The versioned delete lets S3 itself enforce retention (AccessDenied while locked -> RetentionViolation) against its own real clock, so expiry unblocks deletion correctly with no client-side clock needed.
+- ObjectStore::put under PutMode::Overwrite refuses any key that has ever carried Object Lock retention (checked via GetObjectRetention before the write), rather than trying to re-derive has-retention-expired client-side. A plain PutObject never touches an existing version -- it just creates a new current one -- so S3 itself would never block an overwrite of a locked object. This is also correct product behavior: objects written via put_with_retention are append-only log content and are never legitimate Overwrite targets; pruning goes through delete (above), which does defer to S3's live enforcement.
+- put_with_retention combines If-None-Match: * (create-only) and the Object Lock headers in one PutObject call -- atomic, no window where the object exists unretained.
+- Error mapping (src/error.rs) is Op-scoped: the same S3 code (AccessDenied, InvalidRequest) means different things depending on which cloud-types operation triggered it, so classify() takes an Op enum rather than a single global code table.
+- Two real (not LocalStack-specific) S3 platform characteristics, observed empirically running live against LocalStack 4.14.0 and documented in crate-level rustdoc: HeadObject reports missing-key errors as NotFound rather than NoSuchKey (no body to carry an XML code); Object Lock retain-until dates carry only second precision on the wire. Neither suite case is skipped -- the integration test injects a whole-second-truncating clock instead of clock::SystemClock so the round-trip assertion is meaningful at S3's actual precision.
+- Integration tests (tests/support/mod.rs) provision a fresh, uniquely-named bucket per test run rather than reusing deploy/local's mtc-log-local bucket: that bucket carries a 1-day default Compliance retention rule (would retain every plain put, breaking test_delete_removes_object), and the ObjectLock suite's fixed key names would collide with still-locked objects from a previous run against a long-lived bucket.
+- aws-sdk-s3 pinned to the exact same version spec/features as dev-replicator's existing dependency (version = 1, rt-tokio + rustls, no default features) -- Cargo.lock diff confirms zero new duplicate versions introduced.
