@@ -1,0 +1,63 @@
+# coordination: the primary-region lease and epoch-fencing protocol
+# (spec §8.2/§8.3, §11), built on the cloud-agnostic `ReplicatedKv` trait from
+# `cloud-types` — never on a provider SDK (rule no-sdk-types-in-domain, §22.8).
+#
+# This is the critical-path anchor for all multi-region work (§25.5): a single
+# region holds a current-epoch lease at a time, every takeover atomically
+# advances the fencing `epoch`, and every coordination write carries the epoch
+# in its condition so a demoted primary cannot mutate state after the epoch
+# moves on.
+[package]
+name = "coordination"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Primary-region lease and epoch-fencing protocol (spec §8.2/§8.3) over the cloud-agnostic ReplicatedKv trait"
+publish = false
+
+[features]
+# Gates the DynamoDB/LocalStack integration test (`tests/lease_ddb.rs`), which
+# will drive the identical `run_lease_suite` against the cloud-aws DDB
+# `ReplicatedKv` once that backend lands (bead mtc-lf7). Off by default so
+# `cargo test -p coordination` needs no Docker; enabled by `--all-features`
+# where the test compiles but stays `#[ignore]`d until the real backend exists.
+integration = []
+
+[dependencies]
+# The coordination substrate: conditional/atomic KV writes are the CAS
+# primitive the lease/epoch protocol is built on (spec §9.5). Domain types
+# only cross this boundary — no vendor SDK types (§22.8).
+cloud-types = { path = "../cloud-types" }
+# Injected time source (spec §22.11): lease expiry and renewal read time only
+# through `Arc<dyn Clock>`, never `SystemTime::now()` (rule
+# no-systemtime-now-in-prod).
+clock = { path = "../clock" }
+# The fencing `Epoch` newtype (§22.1) and the `LogId` that forms the lease
+# item's partition key (`log#{logId}`, spec §8.2). Reused, not re-declared, so
+# the lease epoch and the counter/checkpoint/batch epochs are one compile-time
+# type across the whole write path (spec §11).
+mtc = { path = "../mtc" }
+# Typed error enums for the library API (rule thiserror-for-libs-eyre-for-bins).
+thiserror = { workspace = true }
+
+[dev-dependencies]
+# The zero-dependency in-memory `ReplicatedKv` the suite, unit tests, and
+# example run against (spec §9.6). The future DDB integration test swaps this
+# for the cloud-aws backend behind the `integration` feature.
+cloud-memory = { path = "../cloud-memory" }
+# Async test runtime to exercise the coordinator across concurrent tasks.
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+# Property test: N concurrent claim attempts yield exactly one winner with
+# unique, monotonic epochs (spec §19.2).
+proptest = { workspace = true }
+# `lease-demo` example error handling: binaries/examples use eyre + color-eyre
+# (rule thiserror-for-libs-eyre-for-bins) so `?` composes the library's typed
+# errors into a colored report.
+eyre = { workspace = true }
+color-eyre = { workspace = true }
+
+[lints]
+workspace = true
