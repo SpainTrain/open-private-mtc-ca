@@ -201,7 +201,7 @@ impl ObjectStore for S3ObjectStore {
             }
         }
         // ListObjectsV2 already returns lexicographic key order; sorting
-        // explicitly documents that guarantee as load-bearing rather than
+        // explicitly documents that guarantee as essential rather than
         // assumed, matching the shared suite's
         // `test_list_returns_only_matching_prefix_sorted_by_key`.
         listed.sort_by(|a, b| a.key.cmp(&b.key));

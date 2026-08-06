@@ -11,7 +11,7 @@
 
 The holistic crypto audit
 ([docs/security/crypto-audit-2026-08-05.md](../security/crypto-audit-2026-08-05.md),
-Finding 1 — its single most load-bearing hardening item) observed that domain
+Finding 1 — its single most critical hardening item) observed that domain
 separation across **signed artifacts** is inconsistent. Only the checkpoint
 signs a domain-separated input: `MTCSubtreeSignatureInput` begins with the
 16-byte label `mtc-subtree/v1\n\0` (draft-03 §5.4.1;
