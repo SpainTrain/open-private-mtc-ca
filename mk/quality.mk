@@ -23,8 +23,8 @@ lint: fmt-check ## Run all linters: rustfmt check + clippy -D warnings (spec §2
 audit: ## Run the self-auditor manually
 	$(call not_implemented,dev-audit-demo-wiring)
 
-bench: ## Run performance benchmarks
-	$(call not_implemented,testing epic (spec §19.11))
+bench: ## Run performance benchmarks (criterion; spec §19.11, §14.3)
+	cargo bench --workspace
 
 cargo-deny: ## License allow-list + advisory + duplicate-dep + source checks (spec §22.13; deny.toml)
 	cargo deny check
