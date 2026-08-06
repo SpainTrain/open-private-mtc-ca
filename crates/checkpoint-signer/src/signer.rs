@@ -108,7 +108,7 @@ impl CheckpointSigner {
             match self.hsm.sign(key_handle, input).await {
                 Ok(signature) => return Ok(signature),
                 Err(error) => {
-                    let attempts = retries + 1;
+                    let attempts = retries.saturating_add(1);
                     if error.is_retryable() && retries < self.retry.max_retries {
                         let backoff = self.retry.backoff_for(retries);
                         retries += 1;

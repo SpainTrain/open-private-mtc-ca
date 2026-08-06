@@ -60,6 +60,9 @@ async-trait = "0.1"
 # scheduling makes the retry driver race-free).
 tokio = { workspace = true, features = ["macros", "rt"] }
 pretty_assertions = { workspace = true }
+# Property test (crypto-review should-fix): proves the §8.1 framing equals mtc's
+# TLS-presentation writer for ANY valid input, not just the fixed KAT vectors.
+proptest = { workspace = true }
 # Criterion signing-latency bench vs the <100ms p99 target (spec §14.3, §19.11).
 # Not in [workspace.dependencies]; pinned here per the parallel-ticket
 # convention (reconciled at merge).

@@ -159,6 +159,7 @@ mod tests {
     use super::{checkpoint_object_key, SignedCheckpointObject};
     use mtc::{Checkpoint, CheckpointBuilder, HashOutput, LogId, Signed, SignedAt, TreeSize};
     use pretty_assertions::assert_eq;
+    use proptest::prelude::*;
 
     fn unsigned(log: &str, tree_size: u64, root: [u8; 32], signed_at: u64) -> Checkpoint {
         CheckpointBuilder::new(LogId::new(log).unwrap())
@@ -248,5 +249,41 @@ mod tests {
             err,
             crate::CheckpointSignError::Input(mtc::TrustAnchorIdError { actual: 300 })
         ));
+    }
+
+    proptest! {
+        /// The framed object equals mtc's TLS-presentation writer for ANY valid
+        /// input — not just the fixed KAT vectors above (crypto-review should-fix):
+        /// frame → parse → same fields+signature → re-serialize byte-identical,
+        /// across all log-id lengths, tree sizes, and signed-at values.
+        #[test]
+        fn framing_equals_mtc_writer_for_any_valid_input(
+            log in "[a-z0-9-]{1,255}",
+            tree_size in any::<u64>(),
+            root in proptest::array::uniform32(any::<u8>()),
+            signed_at in any::<u64>(),
+            signature in proptest::collection::vec(any::<u8>(), 64..=64),
+        ) {
+            let Ok(log_id) = LogId::new(log.as_str()) else { return Ok(()); };
+            let cp = CheckpointBuilder::new(log_id)
+                .root_hash(HashOutput(root))
+                .tree_size(TreeSize(tree_size))
+                .signed_at(SignedAt(signed_at))
+                .build();
+            let object = SignedCheckpointObject::frame(&cp, &signature)
+                .expect("a valid <=255-byte log id and 64-byte signature always frame");
+
+            let parsed = Checkpoint::<Signed>::parse_tls_presentation(object.bytes())
+                .expect("mtc must parse our framed object");
+            prop_assert_eq!(parsed.log_id().as_str(), log.as_str());
+            prop_assert_eq!(parsed.tree_size(), TreeSize(tree_size));
+            prop_assert_eq!(parsed.root_hash(), &HashOutput(root));
+            prop_assert_eq!(parsed.signed_at(), SignedAt(signed_at));
+            prop_assert_eq!(parsed.signature().as_bytes(), signature.as_slice());
+            prop_assert_eq!(
+                parsed.serialize_tls_presentation().expect("mtc re-serializes"),
+                object.bytes()
+            );
+        }
     }
 }

@@ -43,6 +43,18 @@ CRATE: acme-core
   DEPENDS ON: clock
   USED BY: (none)
 
+CRATE: checkpoint-signer
+  PURPOSE: Write-path step 7: typestate checkpoint build + HSM ECDSA P-256 signing with retry/backoff, framing the §8.1 signed-checkpoint object (spec §11.1, §14.1, §14.3)
+  PUBLIC API:
+    - enum CheckpointSignError
+    - fn checkpoint_object_key
+    - struct SignedCheckpointObject
+    - const CHECKPOINT_OBJECT_PREFIX
+    - struct RetryPolicy
+    - struct CheckpointSigner
+  DEPENDS ON: clock, cloud-memory, cloud-types, mtc
+  USED BY: (none)
+
 CRATE: clock
   PURPOSE: Injected Clock trait, SystemClock, and thread-safe FakeClock (spec §22.11, §18.4)
   PUBLIC API:
@@ -52,7 +64,7 @@ CRATE: clock
     - trait Clock
     - struct SystemClock
   DEPENDS ON: (none)
-  USED BY: acme-core, cloud-aws, cloud-memory, cloud-test-suite, coordination, dev-replicator, mtc-admin, retention
+  USED BY: acme-core, checkpoint-signer, cloud-aws, cloud-memory, cloud-test-suite, coordination, dev-replicator, mtc-admin, retention
 
 CRATE: cloud-aws
   PURPOSE: AWS-backed cloud-types implementations (S3ObjectStore, S3ObjectLock) over aws-sdk-s3, exercised against LocalStack (spec §9.3)
@@ -72,7 +84,7 @@ CRATE: cloud-memory
     - struct MemoryObjectStore
     - struct MemoryReplicatedKv
   DEPENDS ON: clock, cloud-test-suite, cloud-types
-  USED BY: cloud-test-suite, coordination, retention
+  USED BY: checkpoint-signer, cloud-test-suite, coordination, retention
 
 CRATE: cloud-softhsm
   PURPOSE: PKCS#11 implementation of the cloud-types Hsm trait against SoftHSM2, the non-FIPS dev stand-in for CloudHSM (spec §9.3, §14)
@@ -135,7 +147,7 @@ CRATE: cloud-types
     - struct UpdateExpression
     - enum Value
   DEPENDS ON: (none)
-  USED BY: cloud-aws, cloud-memory, cloud-softhsm, cloud-test-suite, coordination, retention
+  USED BY: checkpoint-signer, cloud-aws, cloud-memory, cloud-softhsm, cloud-test-suite, coordination, retention
 
 CRATE: coordination
   PURPOSE: Primary-region lease and epoch-fencing protocol (spec §8.2/§8.3) over the cloud-agnostic ReplicatedKv trait
@@ -274,7 +286,7 @@ CRATE: mtc
     - WireError
     - struct U24
   DEPENDS ON: (none)
-  USED BY: coordination, mtc-ca-service, mtc-conformance, mtc-read, mtc-verify
+  USED BY: checkpoint-signer, coordination, mtc-ca-service, mtc-conformance, mtc-read, mtc-verify
 
 CRATE: mtc-admin
   PURPOSE: Admin API core: axum app mounting the generated admin-api-server routes (spec §17.2)
