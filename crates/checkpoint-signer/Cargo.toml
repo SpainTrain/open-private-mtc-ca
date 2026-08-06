@@ -1,0 +1,75 @@
+# checkpoint-signer: write-path step 7 (spec §11.1) — build a checkpoint,
+# HSM-sign it (ECDSA P-256, spec §14.1), and frame the §8.1 signed-checkpoint
+# object.
+#
+# Self-contained by design (dispatch "Option B"): this crate never mutates
+# `crates/mtc`. It assembles the canonical `MTCSubtreeSignatureInput` via mtc's
+# `Checkpoint`, signs those bytes through the `cloud_types::Hsm` seam (64-byte
+# P1363 r‖s, ADR-0003), and frames the §8.1 `.signed` object bytes so they are
+# byte-identical to mtc's TLS-presentation signed-checkpoint format. A typed
+# `into_signed` seam on mtc is a separate fast-follow (bead mtc-qka.12).
+#
+# Non-workspace deps are pinned in-crate per the parallel-ticket convention and
+# LISTED in the ticket report (reconciled into the workspace baseline at merge).
+[package]
+name = "checkpoint-signer"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Write-path step 7: typestate checkpoint build + HSM ECDSA P-256 signing with retry/backoff, framing the §8.1 signed-checkpoint object (spec §11.1, §14.1, §14.3)"
+publish = false
+
+[features]
+# Live SoftHSM2 PKCS#11 integration test (tests/softhsm.rs). Off by default so
+# `cargo test -p checkpoint-signer` stays a fast, dependency-free unit run
+# (spec §19.1); turning it on pulls in the cloud-softhsm backend and drives a
+# real token.
+integration = ["dep:cloud-softhsm"]
+
+[dependencies]
+# Canonical checkpoint types + the crown-jewel signature-input assembly + the
+# TLS-presentation parser used as the read-path anti-drift oracle. Domain types
+# only (rule no-sdk-types-in-domain, spec §22.8).
+mtc = { path = "../mtc" }
+# The HSM signing seam (`Arc<dyn Hsm>`), the `CloudError` taxonomy, and the
+# `KeyHandle` / `PublicKey` domain DTOs (spec §9.1).
+cloud-types = { path = "../cloud-types" }
+# Injected time for retry backoff (rule no-systemtime-now-in-prod, spec §22.11).
+# The `tokio` feature provides the `AsyncClock` sleep helper the backoff uses;
+# under a `FakeClock` it advances deterministically with no wall-clock wait.
+clock = { path = "../clock", features = ["tokio"] }
+# Typed library error enum (rule thiserror-for-libs-eyre-for-bins, spec §22.6).
+thiserror = { workspace = true }
+# Optional: only the `--features integration` SoftHSM2 test needs a backend, so
+# it (and its cryptoki build) stays out of the default unit-test path.
+cloud-softhsm = { path = "../cloud-softhsm", optional = true }
+
+[dev-dependencies]
+# In-memory HSM (real ECDSA P-256) for unit tests: happy-path signing, the
+# signature-verifies-against-the-public-key check, and the wrapped fake-HSM
+# retry doubles.
+cloud-memory = { path = "../cloud-memory" }
+# The fake-HSM test doubles implement the async `Hsm` trait. Pinned to match
+# cloud-types / cloud-memory / cloud-softhsm.
+async-trait = "0.1"
+# `#[tokio::test]` + a current-thread runtime to drive async signing and the
+# FakeClock-mediated backoff deterministically (single-threaded cooperative
+# scheduling makes the retry driver race-free).
+tokio = { workspace = true, features = ["macros", "rt"] }
+pretty_assertions = { workspace = true }
+# Criterion signing-latency bench vs the <100ms p99 target (spec §14.3, §19.11).
+# Not in [workspace.dependencies]; pinned here per the parallel-ticket
+# convention (reconciled at merge).
+criterion = "0.5"
+
+[[bench]]
+name = "sign_checkpoint"
+harness = false
+
+[lints]
+# Inherit the full workspace lint baseline (unsafe_code = forbid, pedantic /
+# nursery / cargo, unwrap/expect deny outside tests, missing_docs).
+workspace = true
