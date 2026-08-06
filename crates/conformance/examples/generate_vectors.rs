@@ -49,10 +49,9 @@ use std::path::{Path, PathBuf};
 
 use eyre::Context;
 use mtc::{
-    hash_leaf, Checkpoint, CheckpointBuilder, Claim, DnsName, EcdsaP256, HashOutput,
-    InclusionProof, Index, LogEntry, LogId, MerkleTree, Sha256Hasher, Signed, SignedAt, SigningKey,
-    SubjectInfoHash, SubjectType, TbsCertificateLogEntry, TlsParse, TlsSerialize, TreeSize,
-    VerifyingKey,
+    Checkpoint, CheckpointBuilder, Claim, DnsName, EcdsaP256, HashOutput, InclusionProof, Index,
+    LogEntry, LogId, MerkleTree, Sha256Hasher, Signed, SignedAt, SigningKey, SubjectInfoHash,
+    SubjectType, TbsCertificateLogEntry, TlsParse, TlsSerialize, TreeSize, VerifyingKey,
 };
 use mtc_conformance::hex;
 use mtc_conformance::schema::{
@@ -284,15 +283,29 @@ fn inclusion_proof_fields(proof: &InclusionProof) -> InclusionProofFields {
     }
 }
 
+/// A distinct certificate log entry for leaf `i` (the subject-info hash encodes
+/// `i`). The tree is built exactly as the CA write path builds it: each leaf
+/// enters via `LogEntry::leaf_bytes`, so the vector pins the real write-path
+/// framing (crypto audit 2026-08-05, Finding 2).
+fn inclusion_entry(i: u64) -> LogEntry {
+    let mut subject_info_hash = [0u8; 32];
+    subject_info_hash[..8].copy_from_slice(&i.to_be_bytes());
+    LogEntry::certificate(
+        TbsCertificateLogEntry::builder()
+            .subject_type(SubjectType::Tls)
+            .subject_info_hash(SubjectInfoHash::from_hash(HashOutput(subject_info_hash)))
+            .build(),
+    )
+}
+
 fn build_inclusion_proof_fixture() -> eyre::Result<InclusionProofFixture> {
-    // The same "entry-{i}" leaf convention crates/mtc's own inclusion-proof
-    // tests use (crates/mtc/src/proof/inclusion.rs `tree_of`).
+    // A 13-leaf log of certificate entries, appended as framed `LeafBytes`.
     let mut tree = MerkleTree::<Sha256Hasher>::new();
     for i in 0..13u64 {
-        tree.append(format!("entry-{i}").as_bytes());
+        tree.append(&inclusion_entry(i).leaf_bytes()?);
     }
     let proof = InclusionProof::generate(&tree, Index(5))?;
-    let leaf_hash = hash_leaf::<Sha256Hasher>(b"entry-5");
+    let leaf_hash = inclusion_entry(5).leaf_hash::<Sha256Hasher>()?;
     let root = tree.root();
     let wire = proof.tls_serialize_to_vec()?;
     let fields = inclusion_proof_fields(&proof);
@@ -308,10 +321,11 @@ fn inclusion_proof_accept_vector(fixture: &InclusionProofFixture) -> Vector {
     Vector::InclusionProof(InclusionProofVector {
         id: "inclusion-proof-accept-001".to_string(),
         description: "Happy path (spec §19.4 AC). InclusionProof::generate for \
-            leaf index 5 of a 13-leaf tree (leaves \"entry-0\"..\"entry-12\", the \
-            same convention crates/mtc's own inclusion-proof tests use), \
-            serialized with tls_serialize_to_vec. Exercises parse accept and \
-            verify accept; leaf_hash_hex is hash_leaf::<Sha256Hasher>(b\"entry-5\")."
+            leaf index 5 of a 13-leaf tree of certificate LogEntry leaves \
+            (subject_info_hash encodes the index), each appended as the framed \
+            LeafBytes the CA write path commits, serialized with \
+            tls_serialize_to_vec. Exercises parse accept and verify accept; \
+            leaf_hash_hex is LogEntry::leaf_hash::<Sha256Hasher> of leaf 5."
             .to_string(),
         wire_hex: hex::encode(&fixture.wire),
         parse: ParseExpectation {

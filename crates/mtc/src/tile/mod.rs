@@ -346,6 +346,7 @@ mod tests {
         build_tiles, combine_subtree_roots, reconstruct_root, Tile, TileCoord, TileError,
         TileIndex, TileLevel, TileWidth, FULL_TILE_HASHES,
     };
+    use crate::leaf::LeafBytes;
     use crate::tree::{hash_leaf, MerkleTree, Sha256Hasher};
     use crate::types::{HashOutput, Index};
     use crate::wire::{TlsSerialize, WireError};
@@ -362,7 +363,7 @@ mod tests {
     fn tree_of(n: u64) -> Tree {
         let mut tree = Tree::new();
         for i in 0..n {
-            tree.append(format!("entry-{i}").as_bytes());
+            tree.append(&LeafBytes::from_framed(format!("entry-{i}").into_bytes()));
         }
         tree
     }

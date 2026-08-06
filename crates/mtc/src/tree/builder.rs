@@ -9,15 +9,21 @@
 //! (spec section 19.2) and appending never rewrites an existing leaf hash — the
 //! append-only property this log depends on (spec section 3).
 //!
-//! This layer is byte-oriented: entries are `&[u8]`. Entry encoding, tiles,
+//! A leaf enters the tree only as a [`LeafBytes`] — the serialized log entry,
+//! entry-type discriminant included — produced by
+//! [`LogEntry::leaf_bytes`](crate::LogEntry::leaf_bytes). That keeps the tree
+//! generic and decoupled from the entry layer (it never names `LogEntry`) while
+//! making it impossible to commit un-framed bytes: the framing the CA writes is
+//! the same serialization a relying party reconstructs (crypto audit
+//! 2026-08-05, Finding 2; see [`crate::leaf`]). Entry encoding, tiles,
 //! inclusion/consistency proofs, and range pruning are deliberately out of
-//! scope here (they arrive with `mtc-serialization`, `mtclib-tiles`,
-//! `mtclib-inclusion-proofs`, and `mtclib-tree-pruning`). Persistence is out of
-//! scope (storage-facade epic); this is an in-memory builder.
+//! scope here. Persistence is out of scope (storage-facade epic); this is an
+//! in-memory builder.
 
 use core::marker::PhantomData;
 
 use super::digest::{empty_root, hash_leaf, hash_node, Hasher, Sha256Hasher};
+use crate::leaf::LeafBytes;
 use crate::types::{HashOutput, Index, TreeSize};
 
 /// An append-only, in-memory Merkle tree over log-entry bytes.
@@ -31,19 +37,28 @@ use crate::types::{HashOutput, Index, TreeSize};
 /// # Examples
 ///
 /// ```
-/// use mtc::{MerkleTree, TreeSize};
+/// use mtc::{null_entry, LogEntry, MerkleTree, SubjectInfoHash, SubjectType, TreeSize};
 ///
-/// // The bare type `MerkleTree` resolves to `MerkleTree<Sha256Hasher>` via
-/// // the default type parameter.
+/// // Leaves enter the tree only as `LeafBytes` produced from a `LogEntry`, so
+/// // the committed framing is exactly what a relying party reconstructs.
+/// let cert = LogEntry::certificate(
+///     mtc::TbsCertificateLogEntry::builder()
+///         .subject_type(SubjectType::Tls)
+///         .subject_info_hash(SubjectInfoHash::from_hash(mtc::HashOutput([7; 32])))
+///         .build(),
+/// );
+///
+/// // The bare type `MerkleTree` resolves to `MerkleTree<Sha256Hasher>` via the
+/// // default type parameter.
 /// let mut tree: MerkleTree = MerkleTree::new();
-/// tree.append(b"entry-0");
-/// tree.append(b"entry-1");
+/// tree.append(&cert.leaf_bytes().unwrap());
+/// tree.append(&null_entry().leaf_bytes().unwrap());
 /// assert_eq!(tree.len(), TreeSize(2));
 ///
 /// // Same entries, same root (spec section 19.2).
 /// let mut other: MerkleTree = MerkleTree::new();
-/// other.append(b"entry-0");
-/// other.append(b"entry-1");
+/// other.append(&cert.leaf_bytes().unwrap());
+/// other.append(&null_entry().leaf_bytes().unwrap());
 /// assert_eq!(tree.root(), other.root());
 /// ```
 #[derive(Clone)]
@@ -81,14 +96,21 @@ impl<H: Hasher> MerkleTree<H> {
         }
     }
 
-    /// Appends one entry and returns the [`Index`] it was assigned.
+    /// Appends one leaf and returns the [`Index`] it was assigned.
     ///
-    /// The entry's leaf hash `HASH(0x00 || entry)` is computed once and stored;
-    /// leaf hashes of earlier entries are never touched (the append-only
-    /// property, spec section 3).
-    pub fn append(&mut self, entry: &[u8]) -> Index {
+    /// `leaf` is a [`LeafBytes`] — the serialized log entry with its entry-type
+    /// discriminant — obtained from
+    /// [`LogEntry::leaf_bytes`](crate::LogEntry::leaf_bytes). Taking that type
+    /// rather than raw `&[u8]` is what guarantees the committed framing matches
+    /// what a relying party reconstructs and verifies against; appending
+    /// un-framed bytes does not typecheck (crypto audit 2026-08-05, Finding 2).
+    ///
+    /// The leaf hash `HASH(0x00 || leaf)` is computed once and stored; leaf
+    /// hashes of earlier entries are never touched (the append-only property,
+    /// spec section 3).
+    pub fn append(&mut self, leaf: &LeafBytes) -> Index {
         let index = Index(self.leaves.len() as u64);
-        self.leaves.push(hash_leaf::<H>(entry));
+        self.leaves.push(hash_leaf::<H>(leaf.as_bytes()));
         index
     }
 
@@ -188,15 +210,24 @@ mod tests {
     use proptest::prelude::*;
 
     use super::{split_point, MerkleTree};
+    use crate::leaf::LeafBytes;
     use crate::tree::digest::{empty_root, hash_leaf, hash_node, Sha256Hasher, SHA256_EMPTY_ROOT};
     use crate::types::{HashOutput, Index, TreeSize};
 
     type Tree = MerkleTree<Sha256Hasher>;
 
+    /// Wraps raw bytes as a leaf for tree-math tests. These tests exercise the
+    /// MTH recurrence over a sequence of leaf preimages, independent of entry
+    /// framing, so they use the crate-internal constructor directly; the
+    /// end-to-end framing is pinned in `tests/leaf_framing_conformance.rs`.
+    fn leaf(bytes: &[u8]) -> LeafBytes {
+        LeafBytes::from_framed(bytes.to_vec())
+    }
+
     fn build(entries: &[&[u8]]) -> Tree {
         let mut tree = Tree::new();
         for e in entries {
-            tree.append(e);
+            tree.append(&leaf(e));
         }
         tree
     }
@@ -253,9 +284,9 @@ mod tests {
     #[test]
     fn append_returns_sequential_indices() {
         let mut tree = Tree::new();
-        assert_eq!(tree.append(b"a"), Index(0));
-        assert_eq!(tree.append(b"b"), Index(1));
-        assert_eq!(tree.append(b"c"), Index(2));
+        assert_eq!(tree.append(&leaf(b"a")), Index(0));
+        assert_eq!(tree.append(&leaf(b"b")), Index(1));
+        assert_eq!(tree.append(&leaf(b"c")), Index(2));
         assert_eq!(
             tree.leaf_hash(Index(1)),
             Some(hash_leaf::<Sha256Hasher>(b"b"))
@@ -287,14 +318,14 @@ mod tests {
 
     #[test]
     fn known_answer_1000_leaf_root_is_deterministic() {
-        // Locks the demo output: two independent builds of the same 1000-entry
-        // sequence agree, so `cargo run --example tree_demo` is deterministic.
+        // Determinism KAT (spec section 19.2): two independent builds of the same
+        // 1000-leaf sequence agree, so a checkpoint over a rebuilt log is stable.
         let entries: Vec<String> = (0..1000).map(|i| format!("entry-{i}")).collect();
         let mut a = Tree::new();
         let mut b = Tree::with_capacity(1000);
         for e in &entries {
-            a.append(e.as_bytes());
-            b.append(e.as_bytes());
+            a.append(&leaf(e.as_bytes()));
+            b.append(&leaf(e.as_bytes()));
         }
         assert_eq!(a.len(), TreeSize(1000));
         assert_eq!(a.root(), b.root());
@@ -333,7 +364,7 @@ mod tests {
             let root_at_old = tree.root();
 
             for e in &added {
-                tree.append(e);
+                tree.append(&leaf(e));
             }
 
             // Leaf hashes for [0, old_len) are byte-for-byte unchanged.

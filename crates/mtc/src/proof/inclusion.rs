@@ -278,6 +278,7 @@ mod tests {
     use proptest::prelude::*;
 
     use super::{inclusion_path_len, InclusionProof};
+    use crate::leaf::LeafBytes;
     use crate::tree::{hash_leaf, Sha256Hasher};
     use crate::types::{HashOutput, Index, TreeSize};
     use crate::wire::{TlsParse, TlsSerialize};
@@ -285,10 +286,14 @@ mod tests {
 
     type Tree = MerkleTree<Sha256Hasher>;
 
+    fn leaf_of(i: u64) -> LeafBytes {
+        LeafBytes::from_framed(format!("entry-{i}").into_bytes())
+    }
+
     fn tree_of(n: u64) -> Tree {
         let mut tree = Tree::new();
         for i in 0..n {
-            tree.append(format!("entry-{i}").as_bytes());
+            tree.append(&leaf_of(i));
         }
         tree
     }
@@ -500,7 +505,7 @@ mod tests {
             let proof = InclusionProof::generate(&tree, Index(index)).unwrap();
             let root_at_n = tree.root();
             for i in n..(n + extra) {
-                tree.append(format!("entry-{i}").as_bytes());
+                tree.append(&leaf_of(i));
             }
             // The proof was made against size n; it still verifies against the
             // size-n root, which is the subtree hash over [0, n) of the grown

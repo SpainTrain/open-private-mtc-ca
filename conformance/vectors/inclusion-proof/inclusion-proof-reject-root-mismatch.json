@@ -2,24 +2,24 @@
   "kind": "inclusion_proof",
   "id": "inclusion-proof-reject-root-mismatch",
   "description": "Must-reject (verify, not parse). inclusion-proof-accept-001's real serialized bytes with the last bit of the final audit-path hash flipped: still a structurally well-formed proof (parse accepts), but verify() reconstructs a different root than the true one, so it rejects with RootMismatch.",
-  "wire_hex": "000000000000000d00000000000000050080194bb5a2d5bd10e5d1aa6fd5d42980b356caf1da623cd9987c4bfa2f81771ed7d448059354605305bf936aa6a0e4c709321c960e2ba6c921b98b9a165319cbe2256b9e8825e5d370a4ae005d0901ea291977e2927f5cf8e3e72660dd09519edbd482cd9b9a5abf2c2026a17333398623ac30a0feff241fee9dc1922b9551f723",
+  "wire_hex": "000000000000000d000000000000000500808da7018d09d27ce62e45589921e06cc15db1594c20aed2fd4a8914c56455c1a4726f25649e2c56153fe3a657d0fe374e26c231472c2b632ceda9b6d38e16784c5517720dca6e7081f6589f94661c6befe0d1d1e27b351af2e0f30a13eed9ae5447aa1c473935fe3ecfb70e2d94118b71364b4d3926f56517966ba527983486fc",
   "parse": {
     "outcome": "accept",
     "fields": {
       "tree_size": 13,
       "leaf_index": 5,
       "audit_path_hex": [
-        "194bb5a2d5bd10e5d1aa6fd5d42980b356caf1da623cd9987c4bfa2f81771ed7",
-        "d448059354605305bf936aa6a0e4c709321c960e2ba6c921b98b9a165319cbe2",
-        "256b9e8825e5d370a4ae005d0901ea291977e2927f5cf8e3e72660dd09519edb",
-        "d482cd9b9a5abf2c2026a17333398623ac30a0feff241fee9dc1922b9551f723"
+        "8da7018d09d27ce62e45589921e06cc15db1594c20aed2fd4a8914c56455c1a4",
+        "726f25649e2c56153fe3a657d0fe374e26c231472c2b632ceda9b6d38e16784c",
+        "5517720dca6e7081f6589f94661c6befe0d1d1e27b351af2e0f30a13eed9ae54",
+        "47aa1c473935fe3ecfb70e2d94118b71364b4d3926f56517966ba527983486fc"
       ]
     }
   },
   "verify": {
     "outcome": "reject",
-    "leaf_hash_hex": "514158527515064c7bbd35b44c9f11addcfc38b439554fc9bb0d8b7c661c3e8f",
-    "root_hash_hex": "96a5a87ed7ac60e0c1b3dbd8d68227ee37e2971a9269db7e93a2a02ced3f7160",
+    "leaf_hash_hex": "4353d77e666499bee08bf66bba1d673bb2e1dbb4bb0b561380302f3dd8183064",
+    "root_hash_hex": "dff36eba34ba5385dc2400b97aaa2f23b042743a15eef53654bdef6006015d67",
     "error_class": "RootMismatch"
   }
 }

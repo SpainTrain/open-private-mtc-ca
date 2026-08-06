@@ -1,0 +1,15 @@
+error[E0308]: mismatched types
+  --> tests/compile_fail/append_raw_bytes.rs:11:17
+   |
+11 |     tree.append(b"raw tbs bytes with no discriminant");
+   |          ------ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `&LeafBytes`, found `&[u8; 34]`
+   |          |
+   |          arguments to this method are incorrect
+   |
+   = note: expected reference `&LeafBytes`
+              found reference `&'static [u8; 34]`
+note: method defined here
+  --> src/tree/builder.rs
+   |
+   |     pub fn append(&mut self, leaf: &LeafBytes) -> Index {
+   |            ^^^^^^

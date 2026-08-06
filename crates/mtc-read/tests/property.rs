@@ -13,8 +13,9 @@
 use std::collections::HashMap;
 
 use mtc::{
-    build_tiles, hash_leaf, hash_node, tiles_for_inclusion, HashOutput, InclusionProof, Index,
-    MerkleTree, Sha256Hasher, TileCoord, TreeSize,
+    build_tiles, hash_node, tiles_for_inclusion, HashOutput, InclusionProof, Index, LogEntry,
+    MerkleTree, Sha256Hasher, SubjectInfoHash, SubjectType, TbsCertificateLogEntry, TileCoord,
+    TreeSize,
 };
 use mtc_read::{plan_inclusion, PathStep, TilePlan, TileSlotRun};
 use proptest::prelude::*;
@@ -22,21 +23,29 @@ use proptest::prelude::*;
 /// The per-tile hashes of a tree, addressed by coordinate.
 type TileMap = HashMap<TileCoord, Vec<HashOutput>>;
 
-/// Entry bytes for leaf `i` (any deterministic mapping works; the tree and the
-/// tiles must agree, which they do by using this for both).
-fn entry_bytes(i: u64) -> Vec<u8> {
-    format!("entry-{i}").into_bytes()
+/// A distinct certificate log entry for leaf `i` (any deterministic mapping
+/// works; the tree and the tiles must agree, which they do by using its
+/// `leaf_bytes` for the tree and its `leaf_hash` for the tiles).
+fn entry_for(i: u64) -> LogEntry {
+    let mut subject_info_hash = [0u8; 32];
+    subject_info_hash[..8].copy_from_slice(&i.to_be_bytes());
+    LogEntry::certificate(
+        TbsCertificateLogEntry::builder()
+            .subject_type(SubjectType::Tls)
+            .subject_info_hash(SubjectInfoHash::from_hash(HashOutput(subject_info_hash)))
+            .build(),
+    )
 }
 
 /// Builds a tree of `n` entries, its leaf hashes, and a coordinate->hashes tile
-/// map (via `mtc::build_tiles`), all from the same entry bytes.
+/// map (via `mtc::build_tiles`), all from the same log entries.
 fn build(n: u64) -> (MerkleTree<Sha256Hasher>, Vec<HashOutput>, TileMap) {
     let mut tree = MerkleTree::<Sha256Hasher>::new();
     let mut leaves = Vec::with_capacity(usize::try_from(n).unwrap());
     for i in 0..n {
-        let bytes = entry_bytes(i);
-        tree.append(&bytes);
-        leaves.push(hash_leaf::<Sha256Hasher>(&bytes));
+        let entry = entry_for(i);
+        tree.append(&entry.leaf_bytes().unwrap());
+        leaves.push(entry.leaf_hash::<Sha256Hasher>().unwrap());
     }
     let mut map = TileMap::new();
     for tile in build_tiles::<Sha256Hasher>(&leaves) {

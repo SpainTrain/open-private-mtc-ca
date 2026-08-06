@@ -1,30 +1,48 @@
 //! Tile demo (ticket `mtclib-tiles`).
 //!
-//! Builds a 1000-leaf issuance-log Merkle tree, emits its full `tlog-tiles` tile
-//! set (with each tile's canonical path and byte length), reconstructs the tree
-//! root from the tiles alone, and lists the tiles an inclusion proof for a
-//! sample leaf needs. The output is deterministic: every run prints the same
-//! root.
+//! Builds a 1000-leaf issuance-log Merkle tree from real `LogEntry` leaves,
+//! emits its full `tlog-tiles` tile set (with each tile's canonical path and
+//! byte length), reconstructs the tree root from the tiles alone, and lists the
+//! tiles an inclusion proof for a sample leaf needs. The output is
+//! deterministic: every run prints the same root.
 //!
 //! ```console
 //! $ cargo run -p mtc --example tiles_demo
 //! ```
 
+use std::error::Error;
+
 use mtc::{
-    build_tiles, hash_leaf, reconstruct_root, tiles_for_inclusion, Index, MerkleTree, Sha256Hasher,
-    TreeSize,
+    build_tiles, reconstruct_root, tiles_for_inclusion, HashOutput, Index, LogEntry, MerkleTree,
+    Sha256Hasher, SubjectInfoHash, SubjectType, TbsCertificateLogEntry, TreeSize,
 };
 
-fn main() {
+/// A distinct certificate log entry for index `i`: leaves enter the tree only
+/// through a `LogEntry`, so the leaf hashes fed to `build_tiles` are exactly the
+/// ones the tree commits.
+fn log_entry_for(i: u64) -> LogEntry {
+    let mut subject_info_hash = [0u8; 32];
+    subject_info_hash[..8].copy_from_slice(&i.to_be_bytes());
+    LogEntry::certificate(
+        TbsCertificateLogEntry::builder()
+            .subject_type(SubjectType::Tls)
+            .subject_info_hash(SubjectInfoHash::from_hash(HashOutput(subject_info_hash)))
+            .build(),
+    )
+}
+
+fn main() -> Result<(), Box<dyn Error>> {
     let n: u64 = 1000;
 
     // Build the tree and, independently, its leaf hashes (both deterministic).
+    // Each leaf is the framed `LeafBytes` of a `LogEntry`, and its leaf hash is
+    // taken over the same bytes — the write/read framing invariant.
     let mut tree: MerkleTree = MerkleTree::new();
     let mut leaves = Vec::new();
     for i in 0..n {
-        let entry = format!("entry-{i}");
-        tree.append(entry.as_bytes());
-        leaves.push(hash_leaf::<Sha256Hasher>(entry.as_bytes()));
+        let entry = log_entry_for(i);
+        tree.append(&entry.leaf_bytes()?);
+        leaves.push(entry.leaf_hash::<Sha256Hasher>()?);
     }
 
     println!("tree size : {}", tree.len().0);
@@ -75,4 +93,6 @@ fn main() {
         }
         Err(err) => println!("\ninclusion path error: {err}"),
     }
+
+    Ok(())
 }

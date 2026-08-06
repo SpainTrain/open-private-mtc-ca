@@ -66,14 +66,15 @@
 //! };
 //! use mtc_verify::verify_inclusion;
 //!
-//! // A log of a few certificate entries. The tree commits to `hash_leaf` of
-//! // each entry's serialized bytes, exactly what `LogEntry::leaf_hash` computes.
+//! // A log of a few certificate entries. Each leaf enters the tree as the
+//! // framed `LeafBytes` a relying party reconstructs, so the committed bytes are
+//! // exactly what `LogEntry::leaf_hash` hashes.
 //! let entries: Vec<LogEntry> = (0..5u8)
 //!     .map(|i| LogEntry::certificate(sample_entry(i)))
 //!     .collect();
 //! let mut tree = MerkleTree::<Sha256Hasher>::new();
 //! for entry in &entries {
-//!     tree.append(&entry.tls_serialize_to_vec()?);
+//!     tree.append(&entry.leaf_bytes()?);
 //! }
 //!
 //! // The CA signs a checkpoint over the current root.
@@ -96,7 +97,7 @@
 //! // The caller must still confirm this is the expected log (log_id is not
 //! // bound by verify_inclusion — see the "Scope" note).
 //! assert_eq!(verified.log_id().as_str(), "demo-log");
-//! # use mtc::{Claim, DnsName, SubjectInfoHash, SubjectType, TbsCertificateLogEntry, TlsSerialize};
+//! # use mtc::{Claim, DnsName, SubjectInfoHash, SubjectType, TbsCertificateLogEntry};
 //! # fn sample_entry(i: u8) -> TbsCertificateLogEntry {
 //! #     TbsCertificateLogEntry::builder()
 //! #         .subject_type(SubjectType::Tls)
@@ -377,7 +378,7 @@ mod tests {
     use mtc::{
         Checkpoint, CheckpointBuilder, Claim, DnsName, EcdsaP256, HashOutput, InclusionProof,
         Index, LogEntry, LogId, MerkleTree, Sha256Hasher, Signed, SignedAt, SubjectInfoHash,
-        SubjectType, TbsCertificateLogEntry, TlsSerialize, TreeSize, VerifyingKey,
+        SubjectType, TbsCertificateLogEntry, TreeSize, VerifyingKey,
     };
 
     type Tree = MerkleTree<Sha256Hasher>;
@@ -397,7 +398,7 @@ mod tests {
         let entries: Vec<LogEntry> = (0..n).map(entry).collect();
         let mut tree = Tree::new();
         for e in &entries {
-            tree.append(&e.tls_serialize_to_vec().unwrap());
+            tree.append(&e.leaf_bytes().unwrap());
         }
         (entries, tree)
     }

@@ -336,6 +336,7 @@ mod tests {
     use proptest::prelude::*;
 
     use super::{consistency_path_len, ConsistencyProof};
+    use crate::leaf::LeafBytes;
     use crate::tree::Sha256Hasher;
     use crate::types::{HashOutput, TreeSize};
     use crate::wire::{TlsParse, TlsSerialize};
@@ -346,7 +347,7 @@ mod tests {
     fn tree_of(n: u64) -> Tree {
         let mut tree = Tree::new();
         for i in 0..n {
-            tree.append(format!("entry-{i}").as_bytes());
+            tree.append(&LeafBytes::from_framed(format!("entry-{i}").into_bytes()));
         }
         tree
     }
