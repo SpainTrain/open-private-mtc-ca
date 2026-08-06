@@ -458,3 +458,14 @@ Decisions:
 
 Open questions:
 - (none)
+
+## 2026-08-06 — mtc-brv6 (coordination lease/epoch): atomic takeover via ONE ReplicatedKv::atomic_update guarded by epoch_condition(E) -- no read-then-write race; epoch (reused mtc::Epoch) is the sole single-writer fence, strictly-monotonic via checked_next; safety margin additive per ADR-0007. Opus adversarial qa PASS (7 break attempts precluded, real single-winner proptest). DDB integration deferred to mtc-lf7; Kani harness present (CI-run). qa N1 invariant (lease item never deleted) captured as module-doc note + follow-up bead.
+
+**Ticket**: —
+**PR**: —
+
+Decisions:
+- mtc-brv6 (coordination lease/epoch): atomic takeover via ONE ReplicatedKv::atomic_update guarded by epoch_condition(E) -- no read-then-write race; epoch (reused mtc::Epoch) is the sole single-writer fence, strictly-monotonic via checked_next; safety margin additive per ADR-0007. Opus adversarial qa PASS (7 break attempts precluded, real single-winner proptest). DDB integration deferred to mtc-lf7; Kani harness present (CI-run). qa N1 invariant (lease item never deleted) captured as module-doc note + follow-up bead.
+
+Open questions:
+- (none)
