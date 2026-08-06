@@ -157,7 +157,6 @@ skip = [
 skip-tree = [
     { crate = "aws-sdk-s3", reason = "dev-only dev-replicator AWS SDK stack (rustls/hyper/http + older RustCrypto) -- see docs/license-policy.md" },
     { crate = "aws-sdk-dynamodb", reason = "same dev-replicator AWS SDK stack -- see docs/license-policy.md" },
-    { crate = "aws-config", reason = "shared AWS SDK runtime root pulled by dev-replicator -- see docs/license-policy.md" },
 ]
 
 # -----------------------------------------------------------------------------
