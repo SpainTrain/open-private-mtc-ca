@@ -1,0 +1,51 @@
+# ca-service: source-agnostic Stage-1/Stage-2 issuance intake seam (ticket
+# mtc-kjl; spec §10.2-§10.4 "Issuance Pipeline: Adapter Pattern", §25.9).
+#
+# Defines the LogEntry submission envelope, the SourceType provenance tag, and
+# the async EntryIntake trait every adapter funnels through to reach the CA
+# write path — native ACME today (crates/acme-core), AWS Private CA /
+# Keyfactor / Cloudflare PCA / etc. as pure additions later (spec §10.4).
+#
+# Deliberately minimal (see crate root docs): the intake queue / batch-builder
+# implementation (ticket mtc-2kx), the ACME HTTP endpoint, and non-ACME
+# adapters are all separate tickets that build ON this seam rather than living
+# in it.
+[package]
+name = "mtc-ca-service"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Source-agnostic entry-intake seam (LogEntry, SourceType, EntryIntake) between issuance adapters and the CA write path (spec §10.2-10.4)"
+publish = false
+
+[dependencies]
+# Index newtype (spec §22.1): EntryIntake::submit_entry's assigned-index
+# return type. Reused from the core domain crate, not redefined here, per the
+# ticket's explicit instruction (one Index type workspace-wide).
+mtc = { path = "../mtc" }
+# Object-safe async traits: EntryIntake is an architectural seam consumed as
+# `Arc<dyn EntryIntake>` by every adapter, mirroring the four cloud-types
+# capability traits (rule prefer-generics-on-hot-paths: seams are the
+# sanctioned Arc<dyn Trait> case). Native async-fn-in-trait is not
+# dyn-compatible. Not in [workspace.dependencies]; pinned here per the
+# cloud-types precedent (crates/cloud-types/Cargo.toml).
+async-trait = "0.1"
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+# Test-only runtime to exercise EntryIntake as `Arc<dyn EntryIntake>` across
+# tasks, matching crates/cloud-types/Cargo.toml's dev-dependency.
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+# Concrete serde data format for the proptest round-trip tests; the crate's
+# own types are format-agnostic (any serde format embeds them). Not in
+# [workspace.dependencies]; pinned here per the crates/retention precedent
+# (its own Cargo.toml cites the same "parallel-ticket convention").
+serde_json = "1"
+
+[lints]
+workspace = true
