@@ -491,3 +491,14 @@ Decisions:
 
 Open questions:
 - (none)
+
+## 2026-08-07 — mtc-1cw (mtc-testutil test-support crate): seeded RNG + temp-dir/env helpers + fixture builders (checkpoint/log_entry/tree, on mtc read-only) + shared proptest arb_* strategy helpers + documented Arbitrary convention + PROPTEST_CASES>=10000 mechanism. 27 tests, qa PASS. CI extended-iteration job deferred to mtc-t92.4.
+
+**Ticket**: —
+**PR**: —
+
+Decisions:
+- mtc-1cw (mtc-testutil test-support crate): seeded RNG + temp-dir/env helpers + fixture builders (checkpoint/log_entry/tree, on mtc read-only) + shared proptest arb_* strategy helpers + documented Arbitrary convention + PROPTEST_CASES>=10000 mechanism. 27 tests, qa PASS. CI extended-iteration job deferred to mtc-t92.4.
+
+Open questions:
+- (none)
