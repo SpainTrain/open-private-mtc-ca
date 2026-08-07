@@ -1,9 +1,9 @@
 # cloud-aws: AWS-backed implementations of the cloud-types traits -- the v1
-# production backend (spec §9.3). This ticket (aws-backend) implements
-# ObjectStore and ObjectLock over aws-sdk-s3, exercised exclusively against
-# LocalStack (spec §1 non-goals: no real AWS spend). DynamoDB ReplicatedKv and
-# CloudHSM land in later tickets (cloud-aws-ddb-kv, cloud-aws-cloudhsm) in
-# this same crate, per the §9.3 crate layout.
+# production backend (spec §9.3). Implements ObjectStore/ObjectLock over
+# aws-sdk-s3 (ticket aws-backend) and ReplicatedKv over aws-sdk-dynamodb
+# (ticket mtc-lf7), exercised exclusively against LocalStack (spec §1
+# non-goals: no real AWS spend). CloudHSM lands in a later ticket
+# (cloud-aws-cloudhsm) in this same crate, per the §9.3 crate layout.
 [package]
 name = "cloud-aws"
 version = "0.1.0"
@@ -12,7 +12,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "AWS-backed cloud-types implementations (S3ObjectStore, S3ObjectLock) over aws-sdk-s3, exercised against LocalStack (spec §9.3)"
+description = "AWS-backed cloud-types implementations (S3ObjectStore, S3ObjectLock, DynamoDbReplicatedKv) over aws-sdk-s3/aws-sdk-dynamodb, exercised against LocalStack (spec §9.3)"
 publish = false
 
 [features]
@@ -36,6 +36,10 @@ async-trait = "0.1"
 # dev-replicator's pin means this crate does not add a second, differently
 # resolved copy of that stack.
 aws-sdk-s3 = { version = "1", default-features = false, features = ["rt-tokio", "rustls"] }
+# AWS SDK DynamoDB client (ticket mtc-lf7). Same pin as aws-sdk-s3 above and
+# matching crates/dev-replicator's existing aws-sdk-dynamodb pin exactly, for
+# the same one-resolved-version reason.
+aws-sdk-dynamodb = { version = "1", default-features = false, features = ["rt-tokio", "rustls"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
@@ -62,6 +66,11 @@ required-features = ["integration"]
 [[test]]
 name = "object_lock_suite"
 path = "tests/object_lock_suite.rs"
+required-features = ["integration"]
+
+[[test]]
+name = "replicated_kv_suite"
+path = "tests/replicated_kv_suite.rs"
 required-features = ["integration"]
 
 [lints]

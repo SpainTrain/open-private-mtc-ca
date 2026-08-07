@@ -67,10 +67,13 @@ CRATE: clock
   USED BY: acme-core, checkpoint-signer, cloud-aws, cloud-backend, cloud-memory, cloud-test-suite, coordination, dev-replicator, mtc-admin, mtcctl, retention
 
 CRATE: cloud-aws
-  PURPOSE: AWS-backed cloud-types implementations (S3ObjectStore, S3ObjectLock) over aws-sdk-s3, exercised against LocalStack (spec §9.3)
+  PURPOSE: AWS-backed cloud-types implementations (S3ObjectStore, S3ObjectLock, DynamoDbReplicatedKv) over aws-sdk-s3/aws-sdk-dynamodb, exercised against LocalStack (spec §9.3)
   PUBLIC API:
     - struct S3Config
     - struct StaticCredentials
+    - struct DynamoDbConfig
+    - struct DynamoDbCredentials
+    - struct DynamoDbReplicatedKv
     - type S3ObjectLock
     - struct S3ObjectStore
   DEPENDS ON: clock, cloud-test-suite, cloud-types

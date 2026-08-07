@@ -1,10 +1,11 @@
 //! `cloud-aws`: AWS-backed implementations of the `cloud-types` traits, the
-//! v1 production backend (spec §9.3). This crate currently implements
+//! v1 production backend (spec §9.3). This crate implements
 //! [`ObjectStore`](cloud_types::ObjectStore) and
 //! [`ObjectLock`](cloud_types::ObjectLock) over `aws-sdk-s3`
-//! ([`S3ObjectStore`]); `DynamoDB` `ReplicatedKv` and `CloudHSM` land in
-//! follow-on tickets in this same crate (spec §9.3 crate layout:
-//! `ddb_replicated_kv.rs`, `cloudhsm.rs`).
+//! ([`S3ObjectStore`]), and [`ReplicatedKv`](cloud_types::ReplicatedKv) over
+//! `aws-sdk-dynamodb` ([`DynamoDbReplicatedKv`], ticket mtc-lf7). `CloudHSM`
+//! lands in a follow-on ticket in this same crate (spec §9.3 crate layout:
+//! `cloudhsm.rs`).
 //!
 //! Exercised exclusively against `LocalStack` -- no real AWS spend (spec §1
 //! non-goals). [`S3Config`] takes an injected endpoint/credentials pair so
@@ -146,10 +147,12 @@
 #![warn(missing_docs)]
 
 mod config;
+mod ddb_replicated_kv;
 mod error;
 mod s3_object_lock;
 mod s3_object_store;
 
 pub use config::{S3Config, StaticCredentials};
+pub use ddb_replicated_kv::{DynamoDbConfig, DynamoDbCredentials, DynamoDbReplicatedKv};
 pub use s3_object_lock::S3ObjectLock;
 pub use s3_object_store::S3ObjectStore;

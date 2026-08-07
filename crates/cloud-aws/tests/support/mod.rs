@@ -1,5 +1,6 @@
-//! Shared `LocalStack` test-bucket bootstrap for `cloud-aws`'s integration
-//! tests (`--features integration`, ticket aws-backend Testing AC).
+//! Shared `LocalStack` test-bucket/-table bootstrap for `cloud-aws`'s
+//! integration tests (`--features integration`, ticket aws-backend Testing
+//! AC; ticket mtc-lf7 adds the `DynamoDB` half).
 //!
 //! [`provision_test_bucket`] creates a *fresh, uniquely-named* bucket per
 //! test run -- versioning + Object Lock enabled, but *no* bucket-level
@@ -20,20 +21,48 @@
 //!   still-locked objects from the previous run. A fresh bucket per run
 //!   sidesteps that without touching the shared suite's key names.
 //!
-//! This support module builds its own raw `aws_sdk_s3::Client` directly
-//! (mirroring `crates/dev-replicator/tests/integration.rs`'s `s3_client`
-//! helper) rather than going through `cloud_aws::S3Config` -- bucket
-//! bootstrapping is test-fixture plumbing, not part of the library's public
-//! surface under test.
+//! [`provision_test_table`] does the `DynamoDB` equivalent: a fresh table with
+//! the same `(PK: String HASH, SK: String RANGE)` key schema as
+//! `01-init-mtc.sh`'s `mtc-log-coordination` table (spec §8.2) -- fresh per
+//! run for the identical "shared suite uses fixed keys" reason above,
+//! rather than reusing the `deploy/local` coordination table.
+//!
+//! This support module builds its own raw `aws_sdk_s3::Client`/
+//! `aws_sdk_dynamodb::Client` directly (mirroring
+//! `crates/dev-replicator/tests/integration.rs`'s `s3_client` helper)
+//! rather than going through `cloud_aws::S3Config`/`DynamoDbConfig` --
+//! bucket/table bootstrapping is test-fixture plumbing, not part of the
+//! library's public surface under test.
+//!
+//! `mod support;` is included whole by three independent `[[test]]` binaries
+//! (`object_store_suite`, `object_lock_suite`, `replicated_kv_suite`), each
+//! of which calls only the S3 *or* the `DynamoDB` half -- so from any one
+//! binary's own dead-code analysis, the other half's helpers are genuinely
+//! unreachable, even though every function here is used by at least one
+//! sibling binary. `docs/lint-policy.md`'s "prefer fixing the code" does not
+//! have a code-shaped fix for this: splitting the file per binary would only
+//! duplicate the S3/DynamoDB bootstrap logic, and every `[[test]]` target
+//! compiles this module independently regardless of file layout.
 
-use std::time::{SystemTime, UNIX_EPOCH};
+#![allow(dead_code)]
 
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use aws_sdk_dynamodb::client::Waiters;
+use aws_sdk_dynamodb::config::{
+    BehaviorVersion as DdbBehaviorVersion, Builder as DdbBuilder, Credentials as DdbCredentials,
+    Region as DdbRegion,
+};
+use aws_sdk_dynamodb::types::{
+    AttributeDefinition, BillingMode, KeySchemaElement, KeyType, ScalarAttributeType,
+};
+use aws_sdk_dynamodb::Client as DdbClient;
 use aws_sdk_s3::config::{BehaviorVersion, Builder, Credentials, Region};
 use aws_sdk_s3::types::{
     BucketVersioningStatus, ObjectLockConfiguration, ObjectLockEnabled, VersioningConfiguration,
 };
 use aws_sdk_s3::Client;
-use cloud_aws::S3Config;
+use cloud_aws::{DynamoDbConfig, S3Config};
 
 /// `LocalStack` endpoint brought up by `deploy/local/docker-compose.yml`.
 pub const ENDPOINT: &str = "http://127.0.0.1:4566";
@@ -116,4 +145,86 @@ pub async fn provision_test_bucket() -> S3Config {
         .await
         .expect("enable Object Lock with no default retention rule");
     S3Config::localstack(bucket, ENDPOINT)
+}
+
+fn raw_ddb_client() -> DdbClient {
+    let credentials = DdbCredentials::new("test", "test", None, None, "cloud-aws-ddb-test-support");
+    let config = DdbBuilder::new()
+        .behavior_version(DdbBehaviorVersion::latest())
+        .region(DdbRegion::new("us-east-1"))
+        .endpoint_url(ENDPOINT)
+        .credentials_provider(credentials)
+        .build();
+    DdbClient::from_conf(config)
+}
+
+/// A collision-resistant-enough table name for one test run -- see
+/// [`unique_bucket_name`]'s identical rationale.
+#[allow(clippy::disallowed_methods)]
+fn unique_table_name() -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    format!("cloud-aws-ddb-test-{nanos}")
+}
+
+/// Creates a fresh table -- `(PK: String HASH, SK: String RANGE)`, the same
+/// key schema `01-init-mtc.sh` gives `mtc-log-coordination` (spec §8.2) --
+/// and returns a [`DynamoDbConfig`] targeting it. Fresh and uniquely-named
+/// per run for the same reason [`provision_test_bucket`] uses a fresh
+/// bucket: the shared suite's fixed key names would otherwise collide with
+/// state left over from a previous run against a long-lived table.
+///
+/// # Panics
+///
+/// Panics (via `.expect`) if `LocalStack` is unreachable, a setup call
+/// fails, or the table does not reach `ACTIVE` within 30s -- see
+/// [`provision_test_bucket`]'s identical rationale.
+#[allow(clippy::expect_used)]
+pub async fn provision_test_table() -> DynamoDbConfig {
+    let table = unique_table_name();
+    let client = raw_ddb_client();
+    client
+        .create_table()
+        .table_name(&table)
+        .attribute_definitions(
+            AttributeDefinition::builder()
+                .attribute_name("PK")
+                .attribute_type(ScalarAttributeType::S)
+                .build()
+                .expect("valid PK attribute definition"),
+        )
+        .attribute_definitions(
+            AttributeDefinition::builder()
+                .attribute_name("SK")
+                .attribute_type(ScalarAttributeType::S)
+                .build()
+                .expect("valid SK attribute definition"),
+        )
+        .key_schema(
+            KeySchemaElement::builder()
+                .attribute_name("PK")
+                .key_type(KeyType::Hash)
+                .build()
+                .expect("valid PK key schema element"),
+        )
+        .key_schema(
+            KeySchemaElement::builder()
+                .attribute_name("SK")
+                .key_type(KeyType::Range)
+                .build()
+                .expect("valid SK key schema element"),
+        )
+        .billing_mode(BillingMode::PayPerRequest)
+        .send()
+        .await
+        .expect("create cloud-aws DynamoDB test table on LocalStack");
+    client
+        .wait_until_table_exists()
+        .table_name(&table)
+        .wait(Duration::from_secs(30))
+        .await
+        .expect("DynamoDB test table becomes ACTIVE");
+    DynamoDbConfig::localstack(table, ENDPOINT)
 }

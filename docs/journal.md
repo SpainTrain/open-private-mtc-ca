@@ -513,3 +513,14 @@ Decisions:
 
 Open questions:
 - (none)
+
+## 2026-08-07 — mtc-lf7 (cloud-aws DynamoDB ReplicatedKv): ReplicatedKv over aws-sdk-dynamodb. ConditionalCheckFailedException -> CloudError::ConditionFailed for PutItem/UpdateItem (is_conditional_check_failed_exception) AND TransactWriteItems (cancellation_reasons code ConditionalCheckFailed -- NO Exception suffix); exhaustively traced (exactly 3 mapping sites, no misclassification either direction) + verified LIVE against LocalStack concurrent-CAS suite. Design: Key splits on first / into (PK,SK) matching coordination log#{logId}/... (8.2); whole Value nested under reserved value attribute for uniform scalar+Map condition translation; atomic_update ReturnValues=ALL_NEW + unconditional attribute_exists(PK) (no auto-vivify) + follow-up consistent GetItem to disambiguate NotFound vs ConditionFailed. qa PASS-WITH-FINDINGS: Scan fallback (empty/slashless prefix, unreachable from coordination) misses consistent_read + untested -> follow-up bead.
+
+**Ticket**: —
+**PR**: —
+
+Decisions:
+- mtc-lf7 (cloud-aws DynamoDB ReplicatedKv): ReplicatedKv over aws-sdk-dynamodb. ConditionalCheckFailedException -> CloudError::ConditionFailed for PutItem/UpdateItem (is_conditional_check_failed_exception) AND TransactWriteItems (cancellation_reasons code ConditionalCheckFailed -- NO Exception suffix); exhaustively traced (exactly 3 mapping sites, no misclassification either direction) + verified LIVE against LocalStack concurrent-CAS suite. Design: Key splits on first / into (PK,SK) matching coordination log#{logId}/... (8.2); whole Value nested under reserved value attribute for uniform scalar+Map condition translation; atomic_update ReturnValues=ALL_NEW + unconditional attribute_exists(PK) (no auto-vivify) + follow-up consistent GetItem to disambiguate NotFound vs ConditionFailed. qa PASS-WITH-FINDINGS: Scan fallback (empty/slashless prefix, unreachable from coordination) misses consistent_read + untested -> follow-up bead.
+
+Open questions:
+- (none)
