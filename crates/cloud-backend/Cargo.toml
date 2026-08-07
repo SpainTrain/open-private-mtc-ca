@@ -1,0 +1,49 @@
+# cloud-backend: the spec §9.4 Backend factory. Wires the four cloud-types
+# trait objects (ObjectStore, ObjectLock, ReplicatedKv, Hsm) into one Backend
+# struct from a BackendConfig + Provider enum. Provider::Memory is fully
+# implemented against cloud-memory (spec §9.6: zero external dependencies);
+# Provider::Aws / Provider::Localstack parse but build_backend returns a
+# typed BackendError::Unimplemented for them until cloud-backend-factory-aws
+# lands. Consumers depend on this crate + cloud-types and never name a
+# concrete backend crate (spec §9.3).
+[package]
+name = "cloud-backend"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "The spec §9.4 Backend factory: BackendConfig -> Backend { object_store, object_lock, replicated_kv, hsm }, with a working Provider::Memory"
+publish = false
+
+[features]
+default = []
+# Gates the cloud-aws dependency below so memory-only consumers never compile
+# the AWS SDK (spec §9.3 "wired via Cargo features"). build_backend's
+# Provider::Aws arm returns BackendError::Unimplemented regardless of this
+# feature -- cloud-backend-factory-aws is the ticket that implements the arm
+# for real and starts compiling cloud-aws behind it; enabling this feature
+# today only proves the dependency stays out of the default build graph.
+aws = ["dep:cloud-aws"]
+
+[dependencies]
+cloud-types = { path = "../cloud-types" }
+cloud-memory = { path = "../cloud-memory" }
+clock = { path = "../clock" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+# Optional, feature-gated (see [features] above). Not referenced by any code
+# path yet -- reserved for cloud-backend-factory-aws, which wires
+# Provider::Aws to cloud_aws::build behind #[cfg(feature = "aws")].
+cloud-aws = { path = "../cloud-aws", optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+# Concrete serde data format for the config-deserialization tests;
+# BackendConfig itself is format-agnostic (any serde format embeds it) -- same
+# rationale as crates/retention and crates/ca-service's existing pins.
+serde_json = "1"
+
+[lints]
+workspace = true
