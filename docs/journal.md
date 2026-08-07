@@ -535,3 +535,14 @@ Decisions:
 
 Open questions:
 - (none)
+
+## 2026-08-07 — mtc-2kx (batch builder, crates/ca-service batch module): bounded mpsc IntakeQueue impl EntryIntake (QueueFull backpressure, no silent drops) + BatchBuilder emitting on cadence (injected AsyncClock, FakeClock-tested) or size 256, whichever first; per-entry completion handles; graceful shutdown drain; loom-checked shutdown gate. FIFO for sequential submitter, concurrent = no-loss/no-dup/each-index-once (property-tested). 20 lib + property + loom tests. qa PASS. Unblocks mtc-22l.
+
+**Ticket**: —
+**PR**: —
+
+Decisions:
+- mtc-2kx (batch builder, crates/ca-service batch module): bounded mpsc IntakeQueue impl EntryIntake (QueueFull backpressure, no silent drops) + BatchBuilder emitting on cadence (injected AsyncClock, FakeClock-tested) or size 256, whichever first; per-entry completion handles; graceful shutdown drain; loom-checked shutdown gate. FIFO for sequential submitter, concurrent = no-loss/no-dup/each-index-once (property-tested). 20 lib + property + loom tests. qa PASS. Unblocks mtc-22l.
+
+Open questions:
+- (none)
