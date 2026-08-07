@@ -1,0 +1,70 @@
+# mtcctl: the admin CLI for the MTC Certificate Authority (spec §17.3,
+# ticket mtc-no9). Declares the complete clap v4 subcommand tree from the
+# spec over the OpenAPI-generated admin API client (spec §17.2,
+# `mtc-admin-api-client`) -- no hand-rolled HTTP anywhere in this crate.
+# Only `status` is wired to a real operation; every other leaf is a
+# declared-but-unimplemented stub (individual operations are separate,
+# per-operation tickets -- see ticket mtc-no9's Out of Scope).
+[package]
+name = "mtcctl"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+description = "Admin CLI for the MTC Certificate Authority: the full spec §17.3 subcommand tree over the generated admin API client"
+
+[[bin]]
+name = "mtcctl"
+path = "src/main.rs"
+
+[dependencies]
+# Workspace-pinned baseline (root Cargo.toml).
+serde = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+# Binary-only (src/main.rs): eyre + color-eyre per thiserror-for-libs-eyre-for-bins.
+eyre = { workspace = true }
+color-eyre = { workspace = true }
+
+# The generated OpenAPI admin API client (spec §17.2) -- the only way this
+# crate talks to the admin API. Default features (native-tls) kept as-is,
+# matching the existing crates/admin-api-tests convention; no reason yet to
+# pick rustls instead.
+mtc-admin-api-client = { path = "../admin-api-client" }
+
+# Crate-local pins -- not yet in the workspace baseline; promote to
+# [workspace.dependencies] when a second crate needs them.
+clap = { version = "4", features = ["derive"] }
+serde_json = "1"
+# NOTE (report this): serde_yaml is in maintenance mode (upstream marked it
+# deprecated in 2024, no replacement has become a clear standard) but is
+# still functional, MIT/Apache-2.0, and is what this ticket's dispatch named
+# explicitly for --output yaml.
+serde_yaml = "0.9"
+comfy-table = "8"
+# StatusResponse's timestamp fields are chrono::DateTime<FixedOffset>
+# (crates/admin-api-client/src/models); this crate calls `.to_rfc3339()` on
+# them directly for human output, so it depends on chrono itself rather than
+# relying on it arriving transitively (matches crates/admin's convention).
+chrono = "0.4"
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+# Live-server integration test (Testing section: "run binary against an
+# in-process axum test server; assert JSON output is stable") -- uses the
+# real admin API router + in-memory CA state (the same server `make demo`
+# runs), not a hand-rolled fake.
+mtc-admin = { path = "../admin" }
+clock = { path = "../clock" }
+axum = "0.8"
+tokio = { workspace = true, features = ["net"] }
+# Unit-tests classify()'s mapping from the generated client's transport
+# errors to CliError; version matches mtc-admin-api-client's own pin so
+# nothing new is resolved (dev-only: not part of the shipped binary).
+reqwest = { version = "0.13", default-features = false }
+
+[lints]
+workspace = true
