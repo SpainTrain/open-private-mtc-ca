@@ -1,0 +1,43 @@
+# Shared test-support crate (Testing Infrastructure epic, ticket mtc-1cw).
+#
+# A dev-dependency toolkit: deterministic seeded RNG, temp-dir/env helpers,
+# fixture builders for checkpoints/log entries/tree-leaf sequences, and the
+# shared proptest strategy helpers + Arbitrary convention (spec §19.2, §19.3
+# Layer 1). Depends on `mtc` read-only — it never adds behavior to the domain
+# types themselves; per-type `Arbitrary` impls are intended to live with each
+# spec type behind a `testing` feature flag (see the `strategy` module docs),
+# not here.
+[package]
+name = "mtc-testutil"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Shared test-support toolkit: seeded RNG, fixtures, and proptest conventions for the MTC-CA workspace"
+publish = false
+
+[dependencies]
+# The only domain dependency: fixtures and strategies build on mtc's spec
+# types. `mtc` has no [workspace.dependencies] entry, so it is referenced by
+# path (matches every other crate depending on it, e.g. mtc-verify, mtc-read).
+mtc = { path = "../mtc" }
+# Typed library error enum (rule thiserror-for-libs-eyre-for-bins).
+thiserror = { workspace = true }
+# proptest is part of this crate's own public API (the `strategy` module
+# returns `impl Strategy<Value = T>`), not just a test dependency. Workspace-
+# pinned.
+proptest = { workspace = true }
+# Not in [workspace.dependencies]; pinned here per the "extra deps pinned
+# in-crate" convention (listed in the ticket report for the merge reconcile).
+# Also part of this crate's public API (`rng::seeded_rng` returns `StdRng`).
+# rand 0.8 depends on rand_core ^0.6, the same major version `mtc` already
+# pins for `OsRng`, so this does not add a second rand_core line to the tree.
+rand = "0.8"
+# Backs `env::temp_dir`; also public API (`env::TempDir` re-export). Not in
+# [workspace.dependencies]; pinned here per the same convention.
+tempfile = "3"
+
+[lints]
+workspace = true
