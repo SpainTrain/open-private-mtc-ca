@@ -25,16 +25,20 @@
 //!   §10.2).
 //! - [`EntryIntake`] — the async trait every adapter submits through. See its
 //!   rustdoc for the full adapter contract (spec §10.3).
+//! - [`batch`] — the in-memory intake queue and batch builder (ticket
+//!   `mtc-2kx`): the first, and so far only, implementation of
+//!   [`EntryIntake`], draining it on a cadence/size trigger (spec §8.4,
+//!   §11.1 step 2). See that module's docs for the full picture.
 //!
 //! # What is deliberately *not* here
 //!
 //! Per ticket `mtc-kjl`'s scope and spec §10.4 ("future adapters are pure
 //! additions"):
 //!
-//! - **The intake queue / batch-builder implementation** (ticket `mtc-2kx`)
-//!   — the thing that actually implements [`EntryIntake`], drains the queue
-//!   on a cadence/size trigger, and hands entries to the tree updater (spec
-//!   §8.4, §11.1 steps 2-3).
+//! - **The tree updater onward** (index allocation through commit and
+//!   delivery, spec §11.1 steps 3-9) — the downstream write-path orchestrator
+//!   (ticket `mtc-22l`) that consumes [`batch`]'s emitted batches; out of
+//!   scope for both this seam and the batch builder itself.
 //! - **The native ACME HTTP endpoint** (`acme-core`, and the future
 //!   finalize/issuance wiring ticket) — the first *consumer* of
 //!   [`EntryIntake`], not defined here.
@@ -47,6 +51,10 @@
 //!
 //! # A worked example (mock adapter)
 //!
+//! The [`batch`] module docs show the real, production-shaped intake queue;
+//! this is a deliberately minimal stand-in demonstrating the trait contract
+//! alone, with no batching.
+//!
 //! ```
 //! use std::sync::Arc;
 //! use std::time::UNIX_EPOCH;
@@ -55,8 +63,6 @@
 //! use mtc::Index;
 //! use mtc_ca_service::{EntryIntake, IntakeError, LogEntry, SourceId, SourceType};
 //!
-//! // A stand-in for the real intake queue (ticket mtc-2kx): assigns
-//! // sequential indices in-memory, no batching.
 //! struct SequentialIntake {
 //!     next: std::sync::atomic::AtomicU64,
 //! }
@@ -91,6 +97,7 @@
 
 #![warn(missing_docs)]
 
+pub mod batch;
 mod entry;
 mod intake;
 
