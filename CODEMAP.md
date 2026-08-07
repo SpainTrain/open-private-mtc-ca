@@ -64,7 +64,7 @@ CRATE: clock
     - trait Clock
     - struct SystemClock
   DEPENDS ON: (none)
-  USED BY: acme-core, checkpoint-signer, cloud-aws, cloud-backend, cloud-memory, cloud-test-suite, coordination, dev-replicator, mtc-admin, retention
+  USED BY: acme-core, checkpoint-signer, cloud-aws, cloud-backend, cloud-memory, cloud-test-suite, coordination, dev-replicator, mtc-admin, mtcctl, retention
 
 CRATE: cloud-aws
   PURPOSE: AWS-backed cloud-types implementations (S3ObjectStore, S3ObjectLock) over aws-sdk-s3, exercised against LocalStack (spec §9.3)
@@ -314,7 +314,7 @@ CRATE: mtc-admin
     - struct ServiceIdentity
     - fn router
   DEPENDS ON: clock, mtc-admin-api-server
-  USED BY: (none)
+  USED BY: mtcctl
 
 CRATE: mtc-admin-api-client
   PURPOSE: Administrative HTTP+JSON API for the Merkle Tree Certificate CA (spec §17.2). Consumed by `mtcctl` (via the generated Rust client) and the admin UI. Seed surface: health endpoints (§20.5) and a minimal service status endpoint (§17.3).
@@ -322,7 +322,7 @@ CRATE: mtc-admin-api-client
     - mod apis
     - mod models
   DEPENDS ON: (none)
-  USED BY: mtc-admin-api-tests
+  USED BY: mtc-admin-api-tests, mtcctl
 
 CRATE: mtc-admin-api-server
   PURPOSE: Administrative HTTP+JSON API for the Merkle Tree Certificate CA (spec §17.2). Consumed by `mtcctl` (via the generated Rust client) and the admin UI. Seed surface: health endpoints (§20.5) and a minimal service status endpoint (§17.3).
@@ -430,6 +430,18 @@ CRATE: mtc-verify
     - enum VerifyError
     - fn verify_inclusion
   DEPENDS ON: mtc
+  USED BY: (none)
+
+CRATE: mtcctl
+  PURPOSE: Admin CLI for the MTC Certificate Authority: the full spec §17.3 subcommand tree over the generated admin API client
+  PUBLIC API:
+    - mod cli
+    - mod client
+    - mod commands
+    - mod error
+    - mod output
+    - fn run
+  DEPENDS ON: clock, mtc-admin, mtc-admin-api-client
   USED BY: (none)
 
 CRATE: retention
