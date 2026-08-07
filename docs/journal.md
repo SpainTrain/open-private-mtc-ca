@@ -524,3 +524,14 @@ Decisions:
 
 Open questions:
 - (none)
+
+## 2026-08-07 — mtc-f35 (storage facade, crates/storage): trait Storage (9 methods, §11.4/§13.3) + StorageError taxonomy + S3DdbStorage::new(Arc<Backend>, StorageConfig); every method returns typed Unimplemented (no panics), for per-pattern sub-tickets. Deps only cloud-types+cloud-backend+mtc. qa PASS. Boundary calls -> mtc-w3f.1: storage::Lease is a local String stand-in (not coordination::Lease); retention_days a plain u32 (not retention::RetentionPolicyConfig); claim_lease/takeover lives in coordination, not Storage.
+
+**Ticket**: —
+**PR**: —
+
+Decisions:
+- mtc-f35 (storage facade, crates/storage): trait Storage (9 methods, §11.4/§13.3) + StorageError taxonomy + S3DdbStorage::new(Arc<Backend>, StorageConfig); every method returns typed Unimplemented (no panics), for per-pattern sub-tickets. Deps only cloud-types+cloud-backend+mtc. qa PASS. Boundary calls -> mtc-w3f.1: storage::Lease is a local String stand-in (not coordination::Lease); retention_days a plain u32 (not retention::RetentionPolicyConfig); claim_lease/takeover lives in coordination, not Storage.
+
+Open questions:
+- (none)
