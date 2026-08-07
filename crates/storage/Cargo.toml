@@ -1,0 +1,49 @@
+# storage: the Storage facade trait (spec §11.4, §13.3) -- the CA service's
+# single storage seam, sitting above the four cloud-types capabilities via a
+# cloud-backend::Backend. This ticket (mtc-f35) defines the trait, the
+# StorageError taxonomy, and the S3DdbStorage constructor; every method body
+# returns StorageError::Unimplemented until the per-pattern sub-tickets land.
+[package]
+name = "storage"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "The Storage facade trait (spec §11.4, §13.3), StorageError taxonomy, and S3DdbStorage wired from a cloud-backend::Backend"
+publish = false
+
+[dependencies]
+# Object-safe async trait methods, so Arc<dyn Storage> matches the CaService
+# pseudocode shape (spec §11.4) -- same rationale and convention as
+# cloud-types (native async-fn-in-trait is not dyn-compatible). Not in
+# [workspace.dependencies]; pinned here per the parallel-work convention.
+async-trait = "0.1"
+# The four capability traits Backend wires up, and the shared CloudError
+# StorageError::Backend wraps (rule no-sdk-types-in-domain: domain types only).
+cloud-types = { path = "../cloud-types" }
+# The §9.4 Backend factory: S3DdbStorage::new takes Arc<Backend>, never naming
+# a concrete backend crate (ticket AC; spec §9.3-9.4).
+cloud-backend = { path = "../cloud-backend" }
+# Core domain newtypes (Index, Epoch, BatchId, ...) and the log-entry / tile /
+# checkpoint types the write path persists (spec §2, §11.4, §13.3). This
+# crate's dependency graph deliberately stops here -- see the module docs in
+# src/types.rs and src/config.rs for the two places that boundary shows up in
+# the API (Lease and retention_days, respectively).
+mtc = { path = "../mtc" }
+# StorageConfig is serde-deserializable (ticket AC), same convention as
+# cloud-backend::BackendConfig / retention::RetentionPolicyConfig.
+serde = { workspace = true }
+# Typed error enum for the library API (rule thiserror-for-libs-eyre-for-bins).
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+# Concrete serde data format for the StorageConfig deserialization test;
+# StorageConfig itself is format-agnostic (same rationale as cloud-backend's
+# and retention's own pin).
+serde_json = "1"
+
+[lints]
+workspace = true
