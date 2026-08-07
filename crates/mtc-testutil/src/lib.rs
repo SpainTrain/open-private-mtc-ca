@@ -16,7 +16,7 @@
 //! - [`rng`] — [`rng::seeded_rng`]: deterministic pseudo-randomness for
 //!   building one concrete fixture value outside a `proptest!` body (the same
 //!   seed always produces the same sequence).
-//! - [`env`] — [`env::temp_dir`] and [`env::EnvVarGuard`]: filesystem and
+//! - [`mod@env`] — [`env::temp_dir`] and [`env::EnvVarGuard`]: filesystem and
 //!   process-environment helpers for tests that need either, cleaned up
 //!   automatically on drop.
 //! - [`strategy`] — shared `proptest` `Strategy` helpers (`arb_hash_output`,

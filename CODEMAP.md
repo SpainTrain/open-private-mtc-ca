@@ -298,7 +298,7 @@ CRATE: mtc
     - WireError
     - struct U24
   DEPENDS ON: (none)
-  USED BY: checkpoint-signer, coordination, mtc-ca-service, mtc-conformance, mtc-read, mtc-verify
+  USED BY: checkpoint-signer, coordination, mtc-ca-service, mtc-conformance, mtc-read, mtc-testutil, mtc-verify
 
 CRATE: mtc-admin
   PURPOSE: Admin API core: axum app mounting the generated admin-api-server routes (spec §17.2)
@@ -409,6 +409,17 @@ CRATE: mtc-read
     - struct TilePlan
     - enum PlanError
     - fn plan_inclusion
+  DEPENDS ON: mtc
+  USED BY: (none)
+
+CRATE: mtc-testutil
+  PURPOSE: Shared test-support toolkit: seeded RNG, fixtures, and proptest conventions for the MTC-CA workspace
+  PUBLIC API:
+    - mod env
+    - mod fixtures
+    - mod rng
+    - mod strategy
+    - enum FixtureError
   DEPENDS ON: mtc
   USED BY: (none)
 
