@@ -64,7 +64,7 @@ CRATE: clock
     - trait Clock
     - struct SystemClock
   DEPENDS ON: (none)
-  USED BY: acme-core, checkpoint-signer, cloud-aws, cloud-memory, cloud-test-suite, coordination, dev-replicator, mtc-admin, retention
+  USED BY: acme-core, checkpoint-signer, cloud-aws, cloud-backend, cloud-memory, cloud-test-suite, coordination, dev-replicator, mtc-admin, retention
 
 CRATE: cloud-aws
   PURPOSE: AWS-backed cloud-types implementations (S3ObjectStore, S3ObjectLock) over aws-sdk-s3, exercised against LocalStack (spec §9.3)
@@ -76,6 +76,18 @@ CRATE: cloud-aws
   DEPENDS ON: clock, cloud-test-suite, cloud-types
   USED BY: (none)
 
+CRATE: cloud-backend
+  PURPOSE: The spec §9.4 Backend factory: BackendConfig -> Backend { object_store, object_lock, replicated_kv, hsm }, with a working Provider::Memory
+  PUBLIC API:
+    - struct BackendConfig
+    - enum ConfigError
+    - enum Provider
+    - enum BackendError
+    - fn build_backend
+    - struct Backend
+  DEPENDS ON: clock, cloud-memory, cloud-types
+  USED BY: (none)
+
 CRATE: cloud-memory
   PURPOSE: Pure in-memory implementations of the cloud-types traits (ObjectStore, ObjectLock, ReplicatedKv, Hsm) for zero-dependency unit tests and local dev (spec §9.3, §9.6)
   PUBLIC API:
@@ -84,7 +96,7 @@ CRATE: cloud-memory
     - struct MemoryObjectStore
     - struct MemoryReplicatedKv
   DEPENDS ON: clock, cloud-test-suite, cloud-types
-  USED BY: checkpoint-signer, cloud-test-suite, coordination, retention
+  USED BY: checkpoint-signer, cloud-backend, cloud-test-suite, coordination, retention
 
 CRATE: cloud-softhsm
   PURPOSE: PKCS#11 implementation of the cloud-types Hsm trait against SoftHSM2, the non-FIPS dev stand-in for CloudHSM (spec §9.3, §14)
@@ -147,7 +159,7 @@ CRATE: cloud-types
     - struct UpdateExpression
     - enum Value
   DEPENDS ON: (none)
-  USED BY: checkpoint-signer, cloud-aws, cloud-memory, cloud-softhsm, cloud-test-suite, coordination, retention
+  USED BY: checkpoint-signer, cloud-aws, cloud-backend, cloud-memory, cloud-softhsm, cloud-test-suite, coordination, retention
 
 CRATE: coordination
   PURPOSE: Primary-region lease and epoch-fencing protocol (spec §8.2/§8.3) over the cloud-agnostic ReplicatedKv trait

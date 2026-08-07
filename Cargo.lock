@@ -857,6 +857,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "cloud-backend"
+version = "0.1.0"
+dependencies = [
+ "clock",
+ "cloud-aws",
+ "cloud-memory",
+ "cloud-types",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "cloud-memory"
 version = "0.1.0"
 dependencies = [
