@@ -35,17 +35,43 @@ mtc = { path = "../mtc" }
 async-trait = "0.1"
 serde = { workspace = true }
 thiserror = { workspace = true }
+# The intake queue's bounded mpsc channel + per-entry oneshot completion
+# handles (ticket mtc-2kx, spec §8.4); `tokio::select!` races the cadence
+# sleep against the next channel receive in `batch::BatchBuilder::next_batch`
+# (macros). Runtime-agnostic sync primitives: no "rt"/"time" feature needed
+# here (those stay test-only -- see [dev-dependencies]).
+tokio = { workspace = true, features = ["sync", "macros"] }
+# Injected time for the batch cadence trigger (rule no-systemtime-now-in-prod,
+# spec §22.11): the `tokio` feature's `AsyncClock::sleep_until` lets the
+# cadence race a channel receive under `tokio::select!`, and resolves
+# instantly under a `FakeClock` advance instead of a real wall-clock wait.
+clock = { path = "../clock", features = ["tokio"] }
+
+# Loom concurrency model checking of `batch::IntakeQueue`'s one hand-rolled
+# synchronization primitive (the shutdown-vs-submit mutex gate; spec §19.12
+# ticket AC). Active only under `RUSTFLAGS="--cfg loom"`:
+#   RUSTFLAGS="--cfg loom" cargo test -p mtc-ca-service --lib --release
+# Not in [workspace.dependencies] yet; pinned here per the crates/clock
+# precedent (reconciled at merge).
+[target.'cfg(loom)'.dependencies]
+loom = "0.7"
 
 [dev-dependencies]
 proptest = { workspace = true }
 # Test-only runtime to exercise EntryIntake as `Arc<dyn EntryIntake>` across
-# tasks, matching crates/cloud-types/Cargo.toml's dev-dependency.
+# tasks, matching crates/cloud-types/Cargo.toml's dev-dependency. "rt" for
+# `#[tokio::test]`/spawn/yield_now, unified with [dependencies]' "sync".
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 # Concrete serde data format for the proptest round-trip tests; the crate's
 # own types are format-agnostic (any serde format embeds them). Not in
 # [workspace.dependencies]; pinned here per the crates/retention precedent
 # (its own Cargo.toml cites the same "parallel-ticket convention").
 serde_json = "1"
+# `batch_demo` example error handling: binaries/examples use eyre +
+# color-eyre (rule thiserror-for-libs-eyre-for-bins) so `?` composes the
+# library's typed errors into a colored report.
+eyre = { workspace = true }
+color-eyre = { workspace = true }
 
 [lints]
 workspace = true
