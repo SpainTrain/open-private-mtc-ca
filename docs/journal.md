@@ -480,3 +480,14 @@ Decisions:
 
 Open questions:
 - (none)
+
+## 2026-08-07 — mtc-789 (cloud-backend factory): §9.4 Backend { 4 Arc<dyn> } + build_backend(BackendConfig), Provider::Memory working (cloud-memory wired); Aws/Localstack -> typed BackendError::Unimplemented until mtc-100; the aws Cargo feature gates the AWS SDK out of default builds (verified via cargo tree). qa PASS. CI default-features matrix cell deferred to mtc-t92.4.
+
+**Ticket**: —
+**PR**: —
+
+Decisions:
+- mtc-789 (cloud-backend factory): §9.4 Backend { 4 Arc<dyn> } + build_backend(BackendConfig), Provider::Memory working (cloud-memory wired); Aws/Localstack -> typed BackendError::Unimplemented until mtc-100; the aws Cargo feature gates the AWS SDK out of default builds (verified via cargo tree). qa PASS. CI default-features matrix cell deferred to mtc-t92.4.
+
+Open questions:
+- (none)
