@@ -64,7 +64,7 @@ CRATE: clock
     - trait Clock
     - struct SystemClock
   DEPENDS ON: (none)
-  USED BY: acme-core, checkpoint-signer, cloud-aws, cloud-backend, cloud-memory, cloud-test-suite, coordination, dev-replicator, mtc-admin, mtcctl, retention
+  USED BY: acme-core, checkpoint-signer, cloud-aws, cloud-backend, cloud-memory, cloud-test-suite, coordination, dev-replicator, mtc-admin, mtc-ca-service, mtcctl, retention
 
 CRATE: cloud-aws
   PURPOSE: AWS-backed cloud-types implementations (S3ObjectStore, S3ObjectLock, DynamoDbReplicatedKv) over aws-sdk-s3/aws-sdk-dynamodb, exercised against LocalStack (spec §9.3)
@@ -349,12 +349,13 @@ CRATE: mtc-admin-api-tests
 CRATE: mtc-ca-service
   PURPOSE: Source-agnostic entry-intake seam (LogEntry, SourceType, EntryIntake) between issuance adapters and the CA write path (spec §10.2-10.4)
   PUBLIC API:
+    - mod batch
     - struct LogEntry
     - struct SourceId
     - enum SourceType
     - trait EntryIntake
     - enum IntakeError
-  DEPENDS ON: mtc
+  DEPENDS ON: clock, mtc
   USED BY: (none)
 
 CRATE: mtc-conformance

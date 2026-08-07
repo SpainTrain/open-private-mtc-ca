@@ -2776,6 +2776,10 @@ name = "mtc-ca-service"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "clock",
+ "color-eyre",
+ "eyre",
+ "loom",
  "mtc",
  "proptest",
  "serde",

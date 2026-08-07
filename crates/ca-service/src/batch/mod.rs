@@ -217,3 +217,25 @@ pub(crate) fn sample_entry(seed: u64) -> crate::LogEntry {
         std::time::UNIX_EPOCH,
     )
 }
+
+#[cfg(all(test, not(loom)))]
+mod config_tests {
+    use super::{BatchConfig, BatchConfigError};
+    use std::time::Duration;
+
+    #[test]
+    fn dev_config_keeps_the_256_cap_with_a_short_cadence() {
+        let dev = BatchConfig::dev();
+        assert_eq!(dev.max_batch_size(), 256);
+        assert_eq!(dev.cadence(), Duration::from_millis(250));
+    }
+
+    #[test]
+    fn new_rejects_a_zero_batch_size_and_accepts_a_positive_one() {
+        assert!(matches!(
+            BatchConfig::new(0, Duration::from_secs(3)),
+            Err(BatchConfigError::ZeroBatchSize)
+        ));
+        assert!(BatchConfig::new(1, Duration::from_secs(3)).is_ok());
+    }
+}
