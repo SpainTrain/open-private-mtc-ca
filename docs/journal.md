@@ -502,3 +502,14 @@ Decisions:
 
 Open questions:
 - (none)
+
+## 2026-08-07 — mtc-no9 (mtcctl CLI skeleton): full §17.3 clap v4 tree (13 groups/30 leaves), status wired end-to-end via generated mtc-admin-api-client (no hand-rolled HTTP), --output human|json|yaml, distinct exit codes, unimplemented leaves exit 3. 34 tests, qa PASS.
+
+**Ticket**: —
+**PR**: —
+
+Decisions:
+- mtc-no9 (mtcctl CLI skeleton): full §17.3 clap v4 tree (13 groups/30 leaves), status wired end-to-end via generated mtc-admin-api-client (no hand-rolled HTTP), --output human|json|yaml, distinct exit codes, unimplemented leaves exit 3. 34 tests, qa PASS.
+
+Open questions:
+- (none)
