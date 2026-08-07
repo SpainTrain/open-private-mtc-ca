@@ -90,9 +90,14 @@ pub use config::StorageConfig;
 pub use error::StorageError;
 pub use types::{BatchState, BatchStatus, Lease};
 
-/// The CA service's storage facade: every operation the write path (spec
-/// §11.4) and the promotion procedure (spec §13.3) perform against durable
-/// state.
+/// The CA service's storage facade: the durable-state operations the write
+/// path (spec §11.4) and the promotion procedure (spec §13.3) perform.
+///
+/// Note: lease *takeover* (`claim_lease` + epoch increment, §13.3 step 3) is
+/// deliberately not a `Storage` method -- it lives in
+/// `coordination::LeaseCoordinator` (mtc-brv6). This facade exposes only
+/// `read_lease`; whether `Storage` grows a delegating `claim_lease` is the
+/// open boundary decision tracked in mtc-w3f.1.
 ///
 /// Implementations sit above the four `cloud-types` capabilities (see
 /// [`S3DdbStorage`]) so the CA service itself never calls `ObjectStore` /

@@ -89,7 +89,7 @@ CRATE: cloud-backend
     - fn build_backend
     - struct Backend
   DEPENDS ON: clock, cloud-memory, cloud-types
-  USED BY: (none)
+  USED BY: storage
 
 CRATE: cloud-memory
   PURPOSE: Pure in-memory implementations of the cloud-types traits (ObjectStore, ObjectLock, ReplicatedKv, Hsm) for zero-dependency unit tests and local dev (spec §9.3, §9.6)
@@ -162,7 +162,7 @@ CRATE: cloud-types
     - struct UpdateExpression
     - enum Value
   DEPENDS ON: (none)
-  USED BY: checkpoint-signer, cloud-aws, cloud-backend, cloud-memory, cloud-softhsm, cloud-test-suite, coordination, retention
+  USED BY: checkpoint-signer, cloud-aws, cloud-backend, cloud-memory, cloud-softhsm, cloud-test-suite, coordination, retention, storage
 
 CRATE: coordination
   PURPOSE: Primary-region lease and epoch-fencing protocol (spec §8.2/§8.3) over the cloud-agnostic ReplicatedKv trait
@@ -301,7 +301,7 @@ CRATE: mtc
     - WireError
     - struct U24
   DEPENDS ON: (none)
-  USED BY: checkpoint-signer, coordination, mtc-ca-service, mtc-conformance, mtc-read, mtc-testutil, mtc-verify
+  USED BY: checkpoint-signer, coordination, mtc-ca-service, mtc-conformance, mtc-read, mtc-testutil, mtc-verify, storage
 
 CRATE: mtc-admin
   PURPOSE: Admin API core: axum app mounting the generated admin-api-server routes (spec §17.2)
@@ -459,5 +459,18 @@ CRATE: retention
     - enum RetentionError
     - struct RetentionPolicy
   DEPENDS ON: clock, cloud-memory, cloud-types
+  USED BY: (none)
+
+CRATE: storage
+  PURPOSE: The Storage facade trait (spec §11.4, §13.3), StorageError taxonomy, and S3DdbStorage wired from a cloud-backend::Backend
+  PUBLIC API:
+    - struct StorageConfig
+    - enum StorageError
+    - struct BatchState
+    - enum BatchStatus
+    - struct Lease
+    - trait Storage
+    - struct S3DdbStorage
+  DEPENDS ON: cloud-backend, cloud-types, mtc
   USED BY: (none)
 
