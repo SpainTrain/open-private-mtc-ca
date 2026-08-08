@@ -29,17 +29,22 @@ cloud-types = { path = "../cloud-types" }
 # Matches cloud-types' / cloud-memory's existing pin.
 async-trait = "0.1"
 # AWS SDK S3 client. Version and feature set pinned to match
-# crates/dev-replicator's existing pin exactly (rt-tokio + rustls, no default
-# features) so Cargo resolves one shared version instead of two -- avoiding a
-# new duplicate-dependency-version entry. mtc-t92.3 tracks the pre-existing
-# webpki RUSTSEC advisory from this SDK stack as a known issue; matching
-# dev-replicator's pin means this crate does not add a second, differently
-# resolved copy of that stack.
-aws-sdk-s3 = { version = "1", default-features = false, features = ["rt-tokio", "rustls"] }
+# crates/dev-replicator's existing pin exactly (rt-tokio + default-https-client,
+# no default features) so Cargo resolves one shared version instead of two --
+# avoiding a new duplicate-dependency-version entry. mtc-t92.3: the SDK's own
+# `rustls` feature name is misleading -- it selects the *legacy* hyper-0.14 /
+# rustls-0.21 client (`aws-smithy-runtime`'s `tls-rustls` feature), which pulls
+# rustls-webpki 0.101.7 (RUSTSEC-2026-0098/0099/0104). `default-https-client`
+# selects the modern hyper-1.x client backed by rustls + aws-lc-rs
+# (`aws-smithy-http-client`'s `rustls-aws-lc` feature), which resolves
+# rustls-webpki >=0.102 -- and happens to unify with the rustls stack
+# `mtc-admin-api-client`'s `rustls` feature already pulls via reqwest, so this
+# also removes a pre-existing rustls/rustls-webpki version duplicate.
+aws-sdk-s3 = { version = "1", default-features = false, features = ["rt-tokio", "default-https-client"] }
 # AWS SDK DynamoDB client (ticket mtc-lf7). Same pin as aws-sdk-s3 above and
 # matching crates/dev-replicator's existing aws-sdk-dynamodb pin exactly, for
 # the same one-resolved-version reason.
-aws-sdk-dynamodb = { version = "1", default-features = false, features = ["rt-tokio", "rustls"] }
+aws-sdk-dynamodb = { version = "1", default-features = false, features = ["rt-tokio", "default-https-client"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
