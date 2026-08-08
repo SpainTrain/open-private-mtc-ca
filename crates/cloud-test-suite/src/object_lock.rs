@@ -35,6 +35,11 @@ use cloud_types::{CloudError, ObjectLock, ObjectStore, PutOptions};
 /// cross-backend contract requirement, so it stays as `cloud-memory`'s own
 /// test (using `clock::FakeClock::advance`) rather than living here.
 ///
+/// It likewise does not assert `Overwrite` of a key that has *ever* held
+/// retention: that outcome is backend-defined (ADR-0009) — S3 refuses it
+/// permanently, `cloud-memory` allows it — and never occurs for append-only
+/// log content.
+///
 /// # Panics
 ///
 /// Panics (via `assert!`/`assert_eq!`) on the first behavior that diverges

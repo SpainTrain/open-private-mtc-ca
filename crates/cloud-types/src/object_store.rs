@@ -115,6 +115,15 @@ pub trait ObjectStore: Send + Sync {
     ///   under an active retention lock.
     /// - [`CloudError::Transport`] — transport/service failure (see
     ///   `retryable`).
+    ///
+    /// # Overwrite of an ever-retained key (backend-defined, ADR-0009)
+    ///
+    /// Whether [`PutMode::Overwrite`] on a key that has *ever* held Object Lock
+    /// retention succeeds is **backend-defined**: the S3 backend refuses it
+    /// permanently (safe strictness — such keys are append-only log content,
+    /// never legitimate overwrite targets), while `cloud-memory` allows it. No
+    /// caller may rely on either outcome, and the shared conformance suite
+    /// deliberately does not assert on it.
     async fn put(&self, key: &str, data: &[u8], opts: PutOptions) -> Result<(), CloudError>;
 
     /// Reads the full contents of the object at `key`.

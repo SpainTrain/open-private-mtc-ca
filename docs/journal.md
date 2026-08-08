@@ -546,3 +546,14 @@ Decisions:
 
 Open questions:
 - (none)
+
+## 2026-08-08 — Decisions (user 2026-08-07) on 3 pending items: (mtc-t92.2) MPL-2.0 ratified -> ADR-0008; (mtc-gyo.2) S3 Overwrite-of-ever-retained is backend-defined not a conformance invariant -> ADR-0009 + cloud-types/object_lock doc notes; (mtc-1hp.4) ACME nonce anti-replay rests on single-use not the wall-clock TTL -> ADR-0010 (acme-core already compliant, no code change). Webpki (mtc-t92.3) = upgrade aws-sdk off vulnerable rustls-webpki: agent in progress + FIPS ADR.
+
+**Ticket**: —
+**PR**: —
+
+Decisions:
+- Decisions (user 2026-08-07) on 3 pending items: (mtc-t92.2) MPL-2.0 ratified -> ADR-0008; (mtc-gyo.2) S3 Overwrite-of-ever-retained is backend-defined not a conformance invariant -> ADR-0009 + cloud-types/object_lock doc notes; (mtc-1hp.4) ACME nonce anti-replay rests on single-use not the wall-clock TTL -> ADR-0010 (acme-core already compliant, no code change). Webpki (mtc-t92.3) = upgrade aws-sdk off vulnerable rustls-webpki: agent in progress + FIPS ADR.
+
+Open questions:
+- (none)
