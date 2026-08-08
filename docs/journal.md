@@ -546,3 +546,20 @@ Decisions:
 
 Open questions:
 - (none)
+
+## 2026-08-08 — mtc-t92.3 (webpki RUSTSEC in cloud-aws/dev-replicator): swapped aws-sdk-s3/aws-sdk-dynamodb's rustls feature for default-https-client in both crates -- feature-flag-only fix, zero source changes.
+
+**Ticket**: mtc-t92.3
+**PR**: —
+
+Decisions:
+- Root cause: the SDK's own `rustls` feature name is a trap -- it selects the legacy hyper-0.14/rustls-0.21 client (vulnerable rustls-webpki 0.101.7, RUSTSEC-2026-0098/0099/0104), not "the rustls backend" a reader would assume. The modern hyper-1.x/rustls-0.23/aws-lc-rs client is a differently-named feature, `default-https-client`, already available in the pinned 1.x SDK line -- no major-version bump needed.
+- Verified via cargo tree + git diff Cargo.lock: fix removes 8 packages outright (h2/hyper/hyper-rustls/rustls/rustls-webpki-0.101.7/sct/socket2/tokio-rustls legacy versions), adds zero new packages -- Cargo unifies onto the same modern rustls-webpki 0.103.13 stack mtc-admin-api-client's reqwest already resolved, clearing a pre-existing undocumented duplicate as a side effect.
+- deny.toml's aws-sdk-s3/aws-sdk-dynamodb skip-tree entries stay (verified load-bearing by temporarily emptying them) but now cover a narrower, unrelated-to-TLS duplicate: aws-sigv4's own SigV4-signing RustCrypto generation + an internal http-0.2.x compat shim in aws-smithy's protocol codecs. Comment rewritten to match; see ADR-0008.
+- FIPS posture (spec §14.4): out of scope. `is_fips_validated()` (crates/cloud-types/src/hsm.rs) and the spec text both scope the FIPS boundary to HSM signing operations only; cloud-aws has no Hsm impl yet (CloudHSM lands in a later ticket). No rustls/TLS/webpki mention anywhere in the spec or prior ADRs re: §14.4. Recorded as ADR-0008 (Proposed -- pending orchestrator/crypto-reviewer confirmation).
+- Rejected: time-boxed `[advisories] ignore` exception (this ticket's fallback, reserved for the orchestrator, not needed since the real fix was clean); pinning an older SDK release (no version avoids the bug while using any rustls feature -- it's a feature-selection defect, not a version defect); `rustls-aws-lc-fips` (heavier build dep for a boundary that doesn't cover transport today).
+- Verification: cargo test -p cloud-aws (46 unit + 3 LocalStack integration suites) and -p dev-replicator (29 unit) green; cargo clippy --workspace --all-targets --all-features -- -D warnings and cargo fmt --check clean; cargo deny check advisories + cargo audit both clear all 3 webpki RUSTSEC (only the pre-existing, unrelated paste/cryptoki unmaintained finding remains).
+
+Open questions:
+- cargo deny check bans has 2 pre-existing failures (rand 0.8 vs 0.9, rand_chacha 0.3 vs 0.9) unrelated to this ticket -- same rand-8-vs-9 skew already documented for rand_core/getrandom in deny.toml, just missing two skip entries. Confirmed present on the untouched b25afc0 baseline via clean `git diff`; not fixed here (out of scope for a security-advisory PR). Candidate follow-up bead.
+- The AWS SDK's confusingly-named `rustls` feature could trap a future aws-sdk-* addition (e.g. cloud-aws-cloudhsm) into reintroducing this vulnerability; no automated guard beyond the Cargo.toml comments left in this PR. Candidate follow-up bead (e.g. a grep-based CI check).

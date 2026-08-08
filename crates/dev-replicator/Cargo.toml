@@ -48,10 +48,15 @@ serde_json = "1"
 # AWS SDK clients, built per-link from an explicit endpoint/region/static
 # test-credential Config (never the ambient env-var default chain — a single
 # link talks to *two different* endpoints, so per-client explicit config is
-# required correctness, not just cleanliness). rustls (not the default
-# aws-lc) keeps the build lighter; LocalStack terminates plain HTTP anyway.
-aws-sdk-s3 = { version = "1", default-features = false, features = ["rt-tokio", "rustls"] }
-aws-sdk-dynamodb = { version = "1", default-features = false, features = ["rt-tokio", "rustls"] }
+# required correctness, not just cleanliness). `default-https-client` (hyper-1.x
+# + rustls/aws-lc-rs, via `aws-smithy-http-client`'s `rustls-aws-lc` feature) --
+# not the SDK's confusingly-named `rustls` feature, which is the *legacy*
+# hyper-0.14 client pulling rustls 0.21 / rustls-webpki 0.101.7
+# (RUSTSEC-2026-0098/0099/0104, mtc-t92.3). LocalStack terminates plain HTTP
+# anyway, so this is purely about which client stack ends up in the dependency
+# tree, not about the TLS handshakes dev-replicator actually performs.
+aws-sdk-s3 = { version = "1", default-features = false, features = ["rt-tokio", "default-https-client"] }
+aws-sdk-dynamodb = { version = "1", default-features = false, features = ["rt-tokio", "default-https-client"] }
 # Log/lag output for the demo binary (spec §18.3 "watch the object appear").
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 

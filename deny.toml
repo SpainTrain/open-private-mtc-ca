@@ -144,19 +144,33 @@ skip = [
 ]
 
 # `skip-tree` skips duplicate *sub-trees* rooted at a crate, for cases where a
-# single dependency drags in a whole parallel stack. The `dev-replicator` crate
-# (a dev-only, laptop-only S3 CRR / DynamoDB replication simulator -- spec §1
-# non-goals + §18.3, never shipped to any production artifact) depends on the
-# AWS SDK, whose runtime (aws-smithy-*, hyper 0.14 / http 0.2 / rustls 0.21-era,
-# and an older RustCrypto generation: sha2/digest/crypto-common/block-buffer/
-# hmac/sha1/const-oid/cpufeatures) duplicates the main crypto path's newer
-# p256 0.13 / sha2 0.10 stack. This is version skew inside the AWS SDK's own
-# transitive tree, not something this workspace controls, and it is confined to
-# a dev tool. Tracked, not silenced: drop these once the AWS SDK re-aligns on
-# the newer hyper/rustls/RustCrypto lines. See docs/license-policy.md.
+# single dependency drags in a whole parallel stack. Both `cloud-aws` (the v1
+# production backend, spec §9.3) and `dev-replicator` (a dev-only, laptop-only
+# S3 CRR / DynamoDB replication simulator -- spec §1 non-goals + §18.3, never
+# shipped to any production artifact) depend on the AWS SDK, whose runtime
+# still duplicates two things against the rest of the workspace, neither
+# related to the TLS/HTTP client: (1) an older RustCrypto generation used
+# internally for SigV4 request signing (sha2/digest/crypto-common/
+# block-buffer/hmac/sha1/const-oid/cpufeatures, via aws-sigv4/
+# aws-smithy-checksums), duplicating the main crypto path's p256 0.13 / sha2
+# 0.10 stack; and (2) an internal http-0.2.x/http-body-0.4.x compatibility
+# layer used by aws-smithy's protocol (json/xml/eventstream) plumbing,
+# duplicating the http 1.x stack the rest of the workspace (axum, reqwest) is
+# on. mtc-t92.3 upgraded both crates' TLS/HTTP client feature from the SDK's
+# legacy `rustls` feature (hyper 0.14 / rustls 0.21 / vulnerable
+# rustls-webpki 0.101.7, RUSTSEC-2026-0098/0099/0104) to `default-https-client`
+# (hyper 1.x / rustls 0.23 / aws-lc-rs), which fully unified that half of the
+# stack with the rest of the workspace -- verified by temporarily emptying
+# this skip-tree and confirming `cargo deny check bans` no longer flags
+# hyper/hyper-rustls/rustls/rustls-webpki/tokio-rustls/h2/socket2/sct
+# duplicates, only the SigV4-signing and http-0.2.x ones below. This is
+# version skew inside the AWS SDK's own transitive tree, not something this
+# workspace controls. Tracked, not silenced: drop these once the AWS SDK
+# re-aligns its SigV4-signing RustCrypto generation and internal http-0.2.x
+# usage with the rest of its own dependency tree. See docs/license-policy.md.
 skip-tree = [
-    { crate = "aws-sdk-s3", reason = "dev-only dev-replicator AWS SDK stack (rustls/hyper/http + older RustCrypto) -- see docs/license-policy.md" },
-    { crate = "aws-sdk-dynamodb", reason = "same dev-replicator AWS SDK stack -- see docs/license-policy.md" },
+    { crate = "aws-sdk-s3", reason = "cloud-aws (production) + dev-replicator AWS SDK stack: SigV4-signing RustCrypto generation + internal http-0.2.x compat layer -- see docs/license-policy.md" },
+    { crate = "aws-sdk-dynamodb", reason = "same AWS SDK stack -- see docs/license-policy.md" },
 ]
 
 # -----------------------------------------------------------------------------
